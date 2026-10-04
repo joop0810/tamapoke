@@ -1,10 +1,10 @@
 {
   "schema": 2,
   "current": {
-    "name": "Dennis-Build 4.1.0",
+    "name": "Dennis-Build 4.1.1",
     "channel": "Lokal",
     "manifest": "manifest.json",
-    "description": "eperdeme 4.0 + deutsche Oberfläche, alle Regionen, Kampf-EP, Fangchance, Laden, Aufräumen, Lockstoff, Ruhmeshalle, Vitrinen-Modus.",
+    "description": "eperdeme 4.0 + deutsche Oberfläche, alle Regionen, Kampf-EP, Fangchance, Laden, Aufräumen, Lockstoff, Ruhmeshalle, Vitrinen-Modus, Shiny-Anzeige im Kampf.",
     "notes": ""
   }
 }
