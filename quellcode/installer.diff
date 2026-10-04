@@ -1,0 +1,235 @@
+--- web/index.html	2026-09-30 17:53:58.004947679 +0200
++++ /root/TamaPoke-Tool-ep/index.html	2026-10-01 10:02:12.601780692 +0200
+@@ -19,7 +19,7 @@
+   <main class="shell">
+     <section class="intro" aria-labelledby="page-title">
+       <div class="intro-copy">
+-        <p class="eyebrow">Firmware and SD manager</p>
++        <p class="eyebrow">Dennis-Build 4.0.6 · lokal · Kanto + Johto</p>
+         <h1 id="page-title">Build your TamaPoke.</h1>
+         <p>Flash the board, install only the regions you need, and keep a restorable copy of your trainer, Pokemon, party, box, badges, and settings.</p>
+         <div class="compatibility">
+@@ -33,6 +33,11 @@
+       </div>
+     </section>
+ 
++    <div class="notice" style="border-left:4px solid #d9534f;padding:.8rem 1rem;margin:0 0 1rem;background:#fff6f4;border-radius:8px">
++      <div><strong>Vor dem Flashen:</strong> „Back up save“ drücken. Im Installer bei <strong>„Erase device“ das Kästchen
++      NICHT anhaken</strong>, nur „Next“ – sonst wird der Spielstand gelöscht.
++      <strong>SD löschen</strong> (Schritt 02) leert die microSD über USB, danach Kanto + Johto installieren.</div>
++    </div>
+     <div class="notice notice-error" id="unsupported" hidden>
+       <i data-lucide="circle-alert" aria-hidden="true"></i>
+       <div><strong>Web Serial is not available.</strong> Open this page in desktop Chrome or Edge.</div>
+@@ -127,6 +132,10 @@
+             Refresh
+           </button>
+           <button class="button button-quiet button-small" id="select-needed" disabled>Select needed</button>
++          <button class="button button-quiet button-small" id="wipe-card" disabled title="Nur mit dem Dennis-Build: löscht alle Dateien auf der microSD">
++            <i data-lucide="eraser" aria-hidden="true"></i>
++            SD löschen
++          </button>
+         </div>
+       </div>
+ 
+@@ -188,6 +197,25 @@
+           <input id="restore" type="file" accept=".tpsave,.txt" hidden>
+         </div>
+       </div>
++      <div class="save-layout" style="margin-top:1rem">
++        <div>
++          <h3>Ruhmeshalle sichern</h3>
++          <p>Die Ruhmeshalle (verabschiedete und freigelassene Pokémon) liegt in einem eigenen Speicherbereich und ist <strong>nicht</strong> in „Download save“ enthalten. Nur mit dem Dennis-Build.</p>
++          <button class="button button-secondary" id="hof-backup" disabled>
++            <i data-lucide="trophy" aria-hidden="true"></i>
++            Ruhmeshalle sichern
++          </button>
++        </div>
++        <div>
++          <h3>Ruhmeshalle wiederherstellen</h3>
++          <p>Ersetzt die Ruhmeshalle auf dem Board durch die gewählte Sicherung. Der Spielstand wird dabei nicht angefasst.</p>
++          <button class="button button-secondary" id="hof-restore-button" disabled>
++            <i data-lucide="trophy" aria-hidden="true"></i>
++            Ruhmeshalle wiederherstellen
++          </button>
++          <input id="hof-restore" type="file" accept=".txt" hidden>
++        </div>
++      </div>
+       <div class="status" id="save-status" role="status" hidden></div>
+ 
+       <section class="release-notes" aria-labelledby="history-title">
+@@ -231,7 +259,7 @@
+   <!-- Vendored and pinned: whether an update keeps the save depends on code inside
+        this package, and check_installer.py reads the copy that ships. -->
+   <script type="module" src="vendor/esp-web-tools-10.4.0/install-button.js"></script>
+-  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
++  <script src="vendor/lucide-0.468.0/lucide.min.js" defer></script>
+   <script type="module" src="installer.js?v=aacc3e7465f0e8b0"></script>
+ </body>
+ </html>
+\ No newline at end of file
+--- web/installer.js	2026-09-30 17:53:58.004947679 +0200
++++ /root/TamaPoke-Tool-ep/installer.js	2026-10-01 09:50:29.234700314 +0200
+@@ -39,6 +39,7 @@
+ // fw= from STATS; empty on firmware that predates reporting it (v3.25 and older).
+ // Both describe the LAST board this page talked to, and outlive the connection.
+ let boardFw = '';
++let isDennis = false;           // Dennis build: board answers VER ... dennis (has FORMAT)
+ let sumSupported = null;       // SUM, probed once per connection
+ let measuredRate = 0;          // bytes/s the last install managed, for the next estimate
+ let dexInfo = null;            // web/dex.json: species names and the level rule
+@@ -471,6 +472,7 @@
+   if (!connected) {
+     writer = null;
+     reader = null;
++    isDennis = false;
+   }
+   syncControls();
+ }
+@@ -568,6 +570,9 @@
+   // Looking for a board that restarted is not a reason to stop somebody flashing.
+   byId('flash-activate').disabled = (busy && !reconnecting) || downgradeBlocked();
+   byId('refresh-packs').disabled = busy || !connected;
++  byId('wipe-card').disabled = busy || !connected || !isDennis;
++  byId('hof-backup').disabled = busy || !connected || !isDennis;
++  byId('hof-restore-button').disabled = busy || !connected || !isDennis;
+   byId('select-needed').disabled = busy || !connected || !Object.keys(packs).length;
+   byId('backup').disabled = busy || !connected;
+   byId('restore-button').disabled = busy || !connected;
+@@ -691,6 +696,7 @@
+   log(`Connected: ${boardLabel()}.`);
+   refreshFlashAdvice();
+   await renderHistory();
++  await probeDennis();
+   await queryInstalledPacks();
+ }
+ 
+@@ -721,6 +727,7 @@
+       log('The board reports no mounted microSD card.');
+       if (!mountTried && await mountCard()) return queryInstalledPacks(true);
+     }
++    warnForeignPacks();
+   }
+   updatePackStatuses();
+ }
+@@ -769,6 +776,105 @@
+   }
+ }
+ 
++// ---------------------------------------------------------------- Dennis build
++// FORMAT empties the whole card. Only the Dennis firmware has it; it answers VER.
++const REGION_NAMES = ['Kanto', 'Johto', 'Hoenn', 'Sinnoh', 'Unova', 'Kalos', 'Alola', 'Galar', 'Paldea'];
++
++async function probeDennis() {
++  isDennis = false;
++  const { lines } = await commandLines('VER', 2500);
++  isDennis = lines.some((line) => /^VER \S+ dennis$/.test(line));
++  log(isDennis ? 'Dennis-Build erkannt: „SD löschen“ ist verfügbar.'
++               : 'Offizielle Firmware (kein „SD löschen“). Für diese Funktion Schritt 01 installieren.');
++  syncControls();
++}
++
++// Packs of regions this tool does not offer still unlock those regions in the game.
++function warnForeignPacks() {
++  const offered = new Set(Object.values(packs).map((meta) => meta.index));
++  const foreign = [...installedPacks].filter(([index, state]) => state !== 'missing' && !offered.has(index))
++    .map(([index]) => REGION_NAMES[index] || `Region ${index}`);
++  if (!foreign.length) return;
++  log(`Auf der Karte liegen weitere Regionen: ${foreign.join(', ')}.`);
++  setStatus('pack', 'warn', `Auf der Karte liegen noch Sprites von ${foreign.join(', ')} – diese Regionen `
++    + 'erscheinen im Spiel. „SD löschen“ und danach nur die gewünschten Regionen installieren räumt das auf.',
++    isDennis ? { label: 'SD löschen', run: () => void wipeCard() } : undefined);
++}
++
++async function wipeCard() {
++  if (!writer || !isDennis) return;
++  if (!window.confirm('SD-Karte komplett löschen?\n\nALLE Dateien auf der microSD werden gelöscht '
++    + '(alle Sprite-Packs). Dein Spielstand liegt im Board-Speicher und ist NICHT betroffen.')) return;
++  setBusy(true);
++  clearStatus('pack');
++  try {
++    log('Lösche die microSD-Karte ...');
++    const { outcome, lines } = await commandLines('FORMAT', 600000);
++    const ok = lines.map((line) => /^FORMAT OK (\d+)/.exec(line)).find(Boolean);
++    if (outcome !== 'DONE' || !ok) {
++      const why = lines.find((line) => line.startsWith('FORMAT ERR')) || 'keine Antwort';
++      throw new Error(`das Board konnte die Karte nicht löschen (${why})`);
++    }
++    log(`microSD gelöscht: ${ok[1]} Dateien/Ordner entfernt.`);
++    setStatus('pack', 'ok', 'Die Karte ist leer. Jetzt die gewünschten Regionen anhaken (z. B. nur Kanto) und „Install selected“ drücken.');
++    verifiedPacks.clear();
++    await queryInstalledPacks();
++  } catch (error) {
++    report('pack', 'SD löschen fehlgeschlagen', error);
++  } finally {
++    setBusy(false);
++  }
++}
++
++// Dennis build: the Hall of Fame lives outside the save, so it has its own backup.
++function hofStamp() {
++  const d = new Date(), p = (n) => String(n).padStart(2, '0');
++  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
++}
++
++async function hofBackup() {
++  if (!writer || !isDennis) return;
++  setBusy(true);
++  clearStatus('save');
++  try {
++    const { outcome, lines } = await commandLines('HOF LIST', 60000);
++    if (outcome !== 'DONE') throw new Error('das Board hat die Ruhmeshalle nicht ausgegeben');
++    const recs = lines.filter((line) => /^HOF [0-9A-F]{64}$/.test(line));
++    const text = `# TamaPoke Ruhmeshalle, ${recs.length} Eintraege\r\n` + recs.map((r) => r + '\r\n').join('');
++    downloadText(`TamaPoke-Ruhmeshalle_${hofStamp()}.txt`, text);
++    log(`Ruhmeshalle gesichert: ${recs.length} Einträge.`);
++    setStatus('save', 'ok', `Ruhmeshalle gesichert (${recs.length} Einträge) – Datei im Download-Ordner.`);
++  } catch (error) {
++    report('save', 'Ruhmeshalle sichern fehlgeschlagen', error);
++  } finally {
++    setBusy(false);
++  }
++}
++
++async function hofRestore(file) {
++  if (!writer || !isDennis || !file) return;
++  const text = await file.text();
++  const recs = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => /^HOF [0-9A-Fa-f]{64}$/.test(l));
++  if (!recs.length) { setStatus('save', 'warn', 'Die Datei enthält keine Ruhmeshalle.'); return; }
++  if (!window.confirm(`Ruhmeshalle wiederherstellen?\n\nDie Ruhmeshalle auf dem Board wird durch ${recs.length} Einträge aus „${file.name}“ ersetzt. Der Spielstand bleibt unberührt.`)) return;
++  setBusy(true);
++  clearStatus('save');
++  try {
++    if (!await expectDone('HOF CLEAR', 10000)) throw new Error('das Board konnte die Ruhmeshalle nicht leeren');
++    let done = 0;
++    for (const rec of recs) {
++      if (!await expectDone('HOF ADD ' + rec.slice(4).toUpperCase(), 10000)) throw new Error(`Eintrag ${done + 1} wurde abgelehnt`);
++      done++;
++    }
++    log(`Ruhmeshalle wiederhergestellt: ${done} Einträge.`);
++    setStatus('save', 'ok', `Ruhmeshalle wiederhergestellt (${done} Einträge).`);
++  } catch (error) {
++    report('save', 'Ruhmeshalle wiederherstellen fehlgeschlagen', error);
++  } finally {
++    setBusy(false);
++  }
++}
++
+ // The serial I/O that packs.js drives, with this page's port behind it.
+ const packIo = {
+   writeLine,
+@@ -1440,6 +1546,14 @@
+ });
+ 
+ byId('install').addEventListener('click', () => void installRegions(selectedPacks()));
++byId('wipe-card').addEventListener('click', () => void wipeCard());
++byId('hof-backup').addEventListener('click', () => void hofBackup());
++byId('hof-restore-button').addEventListener('click', () => byId('hof-restore').click());
++byId('hof-restore').addEventListener('change', (event) => {
++  const file = event.target.files[0];
++  event.target.value = '';
++  void hofRestore(file);
++});
+ 
+ byId('files-button').addEventListener('click', () => byId('files').click());
+ byId('files').addEventListener('change', async (event) => {
