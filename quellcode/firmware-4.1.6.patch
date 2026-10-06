@@ -123,7 +123,7 @@ index 921026eb..7e8da6c9 100644
  ### The three endings (you choose & witness each — none auto-fire)
  - 💛 **Farewell** — when it's a **final form** that has lived **3 days**. A button
 diff --git a/TamaPoke.ino b/TamaPoke.ino
-index 8d24a9c6..bfd5f294 100644
+index 8d24a9c6..02aedc8c 100644
 --- a/TamaPoke.ino
 +++ b/TamaPoke.ino
 @@ -32,6 +32,7 @@
@@ -139,7 +139,7 @@ index 8d24a9c6..bfd5f294 100644
  // Version del firmware. Subir este numero en cada release (y manifest.json para
  // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
 -#define FW_VERSION "4.0"
-+#define FW_VERSION "4.1.5"    // Dennis build on eperdeme 4.0 -- see README "Dennis build"
++#define FW_VERSION "4.1.6"    // Dennis build on eperdeme 4.0 -- see README "Dennis build"
  
  Arduino_DataBus *bus = new Arduino_ESP32QSPI(
    LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -1898,7 +1898,7 @@ index 8d24a9c6..bfd5f294 100644
      gfx->setTextColor(UI_INK);
      gfx->setTextSize(1);
      gfx->setCursor(CX - (int)strlen(sw) * 3, PSLOT_PROMPT_Y);
-@@ -7707,6 +8588,153 @@ void galleryClampPage() {
+@@ -7707,6 +8588,203 @@ void galleryClampPage() {
    if (galleryPage >= n) galleryPage = n - 1;
  }
  
@@ -1939,6 +1939,55 @@ index 8d24a9c6..bfd5f294 100644
 +  vitExitUntil = now + 5000;
 +}
 +
++// Dennis build 4.1.6: the creature fills the stage. The PMD canvas carries a
++// lot of empty margin, so the scale comes from the pixels actually drawn across
++// all idle frames, not from the canvas: tall ones fit 230 px, wide ones 260 px.
++#define VIT_GROUND 318
++#define VIT_MAX_H 230
++#define VIT_MAX_W 260
++uint8_t vitS = 5;
++int16_t vitL = 0, vitR = 0, vitH = 0;   // visible columns / height of the idle canvas
++static void vitMeasure() {
++  vitS = 5; vitL = 0; vitR = 0; vitH = 0;
++  const PmdAct &a = vitPmd.acts[PMD_IDLE];
++  if (!vitPmd.loaded || !a.frames || !a.w || !a.h) return;
++  int top = a.h, bot = -1, left = a.w, right = -1;
++  for (int f = 0; f < a.frames; f++) {
++    const uint8_t *fr = a.data + (uint32_t)f * a.w * a.h;
++    for (int r = 0; r < a.h; r++)
++      for (int c = 0; c < a.w; c++)
++        if (fr[r * a.w + c] != 0xFF) {
++          if (r < top) top = r;
++          if (r > bot) bot = r;
++          if (c < left) left = c;
++          if (c > right) right = c;
++        }
++  }
++  if (bot < top || right < left) return;
++  int h = (a.base ? a.base : bot + 1) - top, w = right - left + 1;
++  int s = VIT_MAX_H / (h > 0 ? h : 1);
++  if (VIT_MAX_W / w < s) s = VIT_MAX_W / w;
++  if (s < 3) s = 3;
++  if (s > 12) s = 12;
++  vitS = (uint8_t)s; vitL = (int16_t)left; vitR = (int16_t)right; vitH = (int16_t)h;
++}
++static void vitDrawPmd(int cx, uint32_t t) {
++  const PmdAct &a = vitPmd.acts[PMD_IDLE];
++  if (!a.frames) return;
++  int s = vitS;
++  const uint8_t *fr = a.data + (uint32_t)pmdFrameAt(a, t, true) * a.w * a.h;
++  int x0 = cx - (vitL + vitR + 1) * s / 2;          // centre the drawn pixels, not the canvas
++  int y0 = VIT_GROUND - (a.base ? a.base : a.h) * s;
++  for (int r = 0; r < a.h; r++) {
++    const uint8_t *row = fr + r * a.w;
++    for (int c = 0; c < a.w; c++) {
++      uint8_t idx = row[c];
++      if (idx == 0xFF) continue;
++      gfx->fillRect(x0 + c * s, y0 + r * s, s, s, vitPmd.pal[idx]);
++    }
++  }
++}
++
 +void renderVitrine() {
 +  uint32_t now = millis();
 +  if (!vitDex || now - vitSince >= VIT_SLIDE_MS) {
@@ -1948,6 +1997,7 @@ index 8d24a9c6..bfd5f294 100644
 +      vitDex = nx;
 +      vitPmd.unload();
 +      if (vitDex > 0) vitPmd.load(vitDex, pet.isShinyRegistered(vitDex));
++      vitMeasure();
 +    }
 +  }
 +  int h = sceneHour();
@@ -1960,8 +2010,8 @@ index 8d24a9c6..bfd5f294 100644
 +  if (vitDex > 0) {
 +    // a slow drift so no pixel of the creature sits still for long
 +    int cx = CX + (int)(36.0f * sinf((float)(now % 60000UL) * 6.2831853f / 60000.0f));
-+    if (vitPmd.loaded) drawPmdActM(vitPmd, PMD_IDLE, cx, PET_GROUND, now, true, false, 5);
-+    else { const uint8_t *t = thumbs.get(vitDex); if (t) drawThumb(t, cx - 80, 170, 4, false); }
++    if (vitPmd.loaded) vitDrawPmd(cx, now);
++    else { const uint8_t *t = thumbs.get(vitDex); if (t) drawThumb(t, cx - 100, 130, 5, false); }
 +    char nm[28];
 +    snprintf(nm, sizeof(nm), "#%03d %s%s", vitDex, pet.isShinyRegistered(vitDex) ? "*" : "", speciesName(vitDex));
 +    char cnt[20];
@@ -2052,7 +2102,7 @@ index 8d24a9c6..bfd5f294 100644
  void renderGallery() {
    if (galleryDetail) {  // vista detalle: se redibuja siempre (animada)
      gfx->fillScreen(RGB565_BLACK);
-@@ -7715,7 +8743,7 @@ void renderGallery() {
+@@ -7715,7 +8793,7 @@ void renderGallery() {
      bool reg = pet.isRegistered(galleryDetail);
      char head[24];
      snprintf(head, sizeof(head), "N.%03d %s%s", galleryDetail,
@@ -2061,7 +2111,7 @@ index 8d24a9c6..bfd5f294 100644
      gfx->setTextColor(reg ? d.accent : UI_INK);
      int glen = strlen(head);
      int gts = (glen <= 13) ? 3 : 2;  // auto-encoge nombres largos (no caben a t3)
-@@ -8059,7 +9087,7 @@ void drawFarewellButton() {
+@@ -8059,7 +9137,7 @@ void drawFarewellButton() {
    gfx->fillRoundRect(x, y, w, h, 16, UI_BAR_WARN);
    gfx->drawRoundRect(x, y, w, h, 16, UI_INK);
    char buf[52];
@@ -2070,7 +2120,7 @@ index 8d24a9c6..bfd5f294 100644
    snprintf(buf, sizeof(buf), T(S_FAREWELL_BTN), nm);
    gfx->setTextColor(UI_INK);
    gfx->setTextSize(2);
-@@ -8076,7 +9104,7 @@ void drawRunawayButton() {
+@@ -8076,7 +9154,7 @@ void drawRunawayButton() {
    gfx->fillRoundRect(x, y, w, h, 16, C565(0x3a, 0x44, 0x5a));
    gfx->drawRoundRect(x, y, w, h, 16, C565(0x70, 0x80, 0x98));
    char buf[52];
@@ -4915,7 +4965,7 @@ index 00000000..6f33f16f
 +  return bad ? 1 : 0;
 +}
 diff --git a/tools/emu/tests/run.sh b/tools/emu/tests/run.sh
-index 7550238d..ad11d994 100755
+index 7550238d..7a0a9481 100755
 --- a/tools/emu/tests/run.sh
 +++ b/tools/emu/tests/run.sh
 @@ -29,7 +29,7 @@ command -v sdl2-config >/dev/null || { echo "SDL2 not found (brew install sdl2)"
@@ -4937,7 +4987,7 @@ index 7550238d..ad11d994 100755
  
  # these drive setup()/loop()/render(), so they need the sketch itself
 -needs_sketch() { case "$1" in touch_test|flush_test|joy_test|anim_test|swipe_test|lan_test|console_test|hit_test|starter_test|release_test|focus_test|explore_test|view_test|transfer_test) return 0;; *) return 1;; esac; }
-+needs_sketch() { case "$1" in shiny_test|dimflash_test|tidy_test|vitrine_test|shop_test|nvsbudget_test|dexcatch_test|hof_test|dennis405_test|catch_test|exp_test|names_test|regionhide_test|touch_test|flush_test|joy_test|anim_test|swipe_test|lan_test|console_test|hit_test|starter_test|release_test|focus_test|explore_test|view_test|transfer_test) return 0;; *) return 1;; esac; }
++needs_sketch() { case "$1" in vitsize_test|shiny_test|dimflash_test|tidy_test|vitrine_test|shop_test|nvsbudget_test|dexcatch_test|hof_test|dennis405_test|catch_test|exp_test|names_test|regionhide_test|touch_test|flush_test|joy_test|anim_test|swipe_test|lan_test|console_test|hit_test|starter_test|release_test|focus_test|explore_test|view_test|transfer_test) return 0;; *) return 1;; esac; }
  
  # and these are standalone: gbsynth.cpp has no Arduino dependency at all, which
  # is the point of it -- linking the game core in would only demand stubs for
@@ -5491,6 +5541,66 @@ index 00000000..61bdb04d
 +  CHECK(!vitrine, "EXIT leaves display mode");
 +  emuSetTimeScale(20000); runFor(125000); emuSetTimeScale(1);
 +  CHECK(pet.ageMinutes >= age + 1 && pet.ageMinutes <= age + 4, "time runs again from now, not from when it was paused");
++  printf(bad ? "FAILURES\n" : "all good\n");
++  return bad ? 1 : 0;
++}
+diff --git a/tools/emu/tests/vitsize_test.cpp b/tools/emu/tests/vitsize_test.cpp
+new file mode 100644
+index 00000000..9bc93334
+--- /dev/null
++++ b/tools/emu/tests/vitsize_test.cpp
+@@ -0,0 +1,54 @@
++// Dennis build 4.1.6: display mode draws the creature large, scaled by the pixels
++// it really has, and keeps it inside the round panel.
++#include "Arduino.h"
++#include "Arduino_GFX_Library.h"
++#include "Preferences.h"
++#include "pet.h"
++#include "i18n.h"
++#include <cstdio>
++#include <cstring>
++uint32_t g_seed=3; FakeSerial Serial; FakeESP ESP; FakeWire Wire;
++volatile int g_touchX=0,g_touchY=0; volatile bool g_touchDown=false;
++void FakeESP::restart(){exit(0);}
++int FakeSerial::available(){return 0;}
++String FakeSerial::readStringUntil(char){return String("");}
++void setup(); void loop(); void render();
++void vitEnter();
++extern Pet pet; extern Arduino_Canvas *gfx; extern int16_t vitDex;
++extern uint8_t vitS; extern int16_t vitL, vitR, vitH;
++static int bad = 0;
++#define CHECK(c, msg) do { if (c) printf("PASS  %s\n", msg); else { printf("FAIL  %s\n", msg); bad++; } } while (0)
++static void shot(const char *path) {
++  const uint16_t *fb = gfx->buffer();
++  FILE *f = fopen(path, "wb"); if (!f) return;
++  fprintf(f, "P6\n466 466\n255\n");
++  for (int i = 0; i < 466 * 466; i++) { uint16_t c = fb[i];
++    unsigned char px[3] = { (unsigned char)((c >> 11) << 3), (unsigned char)(((c >> 5) & 63) << 2), (unsigned char)((c & 31) << 3) };
++    fwrite(px, 1, 3, f); }
++  fclose(f);
++}
++int main() {
++  setup();
++  for (int i = 0; i < 4; i++) loop();
++  if (pet.awaitingStarter()) pet.chooseStarter(4);
++  pet.dbgHatchAs(4, false);
++  pet.ageMinutes = 20UL * MINUTES_PER_LEVEL;
++  gLang = LANG_DE;
++  vitEnter();
++  const int16_t show[] = { 4, 25, 95, 129, 130, 143, 150, 6 };
++  for (int16_t d : show) {
++    memset(pet.dexReg, 0, sizeof(pet.dexReg));
++    pet.dexReg[(d - 1) >> 3] |= 1 << ((d - 1) & 7);
++    vitDex = 0;
++    render();
++    if (!vitH) { printf("      no sprite pack in tools/sdcard -- nothing to measure, skipped\n"); return 0; }
++    int w = (vitR - vitL + 1) * vitS, h = vitH * vitS;
++    char nm[32]; snprintf(nm, sizeof(nm), "vitsize_%03d.ppm", d); shot(nm);
++    printf("      #%03d %-10s x%u: %d x %d px\n", d, speciesName(d), vitS, w, h);
++    CHECK(vitDex == d, "the species is on show");
++    CHECK(h >= 150 || w >= 200, "it is drawn large (it was about 90 px before)");
++    CHECK(h <= 230 && w <= 260, "and fits between the sky edge and the name plate");
++  }
 +  printf(bad ? "FAILURES\n" : "all good\n");
 +  return bad ? 1 : 0;
 +}
