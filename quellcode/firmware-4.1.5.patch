@@ -123,7 +123,7 @@ index 921026eb..7e8da6c9 100644
  ### The three endings (you choose & witness each — none auto-fire)
  - 💛 **Farewell** — when it's a **final form** that has lived **3 days**. A button
 diff --git a/TamaPoke.ino b/TamaPoke.ino
-index 8d24a9c6..6f2ff4b3 100644
+index 8d24a9c6..bfd5f294 100644
 --- a/TamaPoke.ino
 +++ b/TamaPoke.ino
 @@ -32,6 +32,7 @@
@@ -139,7 +139,7 @@ index 8d24a9c6..6f2ff4b3 100644
  // Version del firmware. Subir este numero en cada release (y manifest.json para
  // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
 -#define FW_VERSION "4.0"
-+#define FW_VERSION "4.1.4"    // Dennis build on eperdeme 4.0 -- see README "Dennis build"
++#define FW_VERSION "4.1.5"    // Dennis build on eperdeme 4.0 -- see README "Dennis build"
  
  Arduino_DataBus *bus = new Arduino_ESP32QSPI(
    LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
@@ -1898,7 +1898,7 @@ index 8d24a9c6..6f2ff4b3 100644
      gfx->setTextColor(UI_INK);
      gfx->setTextSize(1);
      gfx->setCursor(CX - (int)strlen(sw) * 3, PSLOT_PROMPT_Y);
-@@ -7707,6 +8588,145 @@ void galleryClampPage() {
+@@ -7707,6 +8588,153 @@ void galleryClampPage() {
    if (galleryPage >= n) galleryPage = n - 1;
  }
  
@@ -1928,7 +1928,15 @@ index 8d24a9c6..6f2ff4b3 100644
 +    vitExit();
 +    return;
 +  }
-+  vitExitUntil = now + 5000;   // first tap only offers the way out
++  // Dennis build 4.1.5: a tap beside the button while it shows puts it away
++  // again; otherwise the first tap only offers the way out (for 5 s).
++  // (a touch that flickers can report two taps in a row: ignore a second one
++  // within 400 ms of the first, or the button would vanish as it appears)
++  if (vitExitUntil && now < vitExitUntil) {
++    if (now + 5000 - vitExitUntil >= 400) vitExitUntil = 0;
++    return;
++  }
++  vitExitUntil = now + 5000;
 +}
 +
 +void renderVitrine() {
@@ -2044,7 +2052,7 @@ index 8d24a9c6..6f2ff4b3 100644
  void renderGallery() {
    if (galleryDetail) {  // vista detalle: se redibuja siempre (animada)
      gfx->fillScreen(RGB565_BLACK);
-@@ -7715,7 +8735,7 @@ void renderGallery() {
+@@ -7715,7 +8743,7 @@ void renderGallery() {
      bool reg = pet.isRegistered(galleryDetail);
      char head[24];
      snprintf(head, sizeof(head), "N.%03d %s%s", galleryDetail,
@@ -2053,7 +2061,7 @@ index 8d24a9c6..6f2ff4b3 100644
      gfx->setTextColor(reg ? d.accent : UI_INK);
      int glen = strlen(head);
      int gts = (glen <= 13) ? 3 : 2;  // auto-encoge nombres largos (no caben a t3)
-@@ -8059,7 +9079,7 @@ void drawFarewellButton() {
+@@ -8059,7 +9087,7 @@ void drawFarewellButton() {
    gfx->fillRoundRect(x, y, w, h, 16, UI_BAR_WARN);
    gfx->drawRoundRect(x, y, w, h, 16, UI_INK);
    char buf[52];
@@ -2062,7 +2070,7 @@ index 8d24a9c6..6f2ff4b3 100644
    snprintf(buf, sizeof(buf), T(S_FAREWELL_BTN), nm);
    gfx->setTextColor(UI_INK);
    gfx->setTextSize(2);
-@@ -8076,7 +9096,7 @@ void drawRunawayButton() {
+@@ -8076,7 +9104,7 @@ void drawRunawayButton() {
    gfx->fillRoundRect(x, y, w, h, 16, C565(0x3a, 0x44, 0x5a));
    gfx->drawRoundRect(x, y, w, h, 16, C565(0x70, 0x80, 0x98));
    char buf[52];
@@ -5366,10 +5374,10 @@ index 00000000..3e3e9c97
 +}
 diff --git a/tools/emu/tests/vitrine_test.cpp b/tools/emu/tests/vitrine_test.cpp
 new file mode 100644
-index 00000000..a13a6f2a
+index 00000000..61bdb04d
 --- /dev/null
 +++ b/tools/emu/tests/vitrine_test.cpp
-@@ -0,0 +1,108 @@
+@@ -0,0 +1,116 @@
 +// Dennis build 4.0.12: display mode. Time stops, nothing is saved, it survives a
 +// restart without catching up, the slideshow walks the Pokedex, and leaving it
 +// carries on from where it was.
@@ -5471,6 +5479,14 @@ index 00000000..a13a6f2a
 +  vitrineTap(233, 233);
 +  CHECK(vitExitUntil != 0 && vitrine, "a first tap only shows EXIT");
 +  shot("vitrine_exit.ppm");
++  vitrineTap(233, 233);
++  CHECK(vitExitUntil != 0, "a flicker right after does not hide it again");
++  { uint32_t t0 = millis(); while (millis() - t0 < 600) loop(); }
++  vitrineTap(233, 233);
++  CHECK(vitExitUntil == 0 && vitrine, "4.1.5: a second tap beside EXIT puts the button away");
++  vitrineTap(233, 233);
++  CHECK(vitExitUntil != 0, "and the next tap shows it again");
++  { uint32_t t0 = millis(); while (millis() - t0 < 600) loop(); }
 +  vitrineTap(233, 392 + 24);
 +  CHECK(!vitrine, "EXIT leaves display mode");
 +  emuSetTimeScale(20000); runFor(125000); emuSetTimeScale(1);

@@ -1,4 +1,4 @@
-# TamaPoke – Dennis-Build 4.1.4
+# TamaPoke – Dennis-Build 4.1.5
 
 Web-Installer für das **Waveshare ESP32-S3-Touch-AMOLED-1.75** mit TamaPoke.
 Basis: [eperdemes TamaPoke 4.0](https://github.com/eperdeme/TamaPoke) und sein Web-Installer, mit deutscher Oberfläche und Ergänzungen.
@@ -49,7 +49,7 @@ Du brauchst nur Chrome oder Edge am PC oder Mac (Firefox und Safari können kein
 | Datei/Ordner | Zweck |
 |---|---|
 | `index.html`, `*.js`, `style.css` | eperdemes Installer mit deutschen Ergänzungen |
-| `manifest.json`, `firmware/` | Firmware 4.1.4 und welche Teile an welche Adresse kommen |
+| `manifest.json`, `firmware/` | Firmware 4.1.5 und welche Teile an welche Adresse kommen |
 | `sprites-*.pak`, `paks.json` | Bilder-Pakete aller neun Regionen mit Prüfsummen |
 | `quellcode/` | Änderungen gegenüber eperdeme 4.0 (Firmware-Patch, Installer-Diff) |
 | `docs/release-notes/` | Versionshinweise |
