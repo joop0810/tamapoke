@@ -1,6 +1,6 @@
 {
-  "name": "TamaPoke 4.1.6 (Dennis)",
-  "version": "4.1.6",
+  "name": "TamaPoke 4.1.7 (Dennis)",
+  "version": "4.1.7",
   "new_install_prompt_erase": true,
   "builds": [
     {
@@ -19,7 +19,7 @@
           "offset": 57344
         },
         {
-          "path": "firmware/app.bin?v=4bc759617e91378b",
+          "path": "firmware/app.bin?v=82a47564947abd91",
           "offset": 65536
         }
       ]
