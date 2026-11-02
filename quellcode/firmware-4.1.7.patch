@@ -1,5 +1,5 @@
 diff --git a/README.md b/README.md
-index 921026eb..7e8da6c9 100644
+index 921026e..7e8da6c 100644
 --- a/README.md
 +++ b/README.md
 @@ -29,6 +29,29 @@ and complete them all (shinies included).
@@ -123,10 +123,14 @@ index 921026eb..7e8da6c9 100644
  ### The three endings (you choose & witness each — none auto-fire)
  - 💛 **Farewell** — when it's a **final form** that has lived **3 days**. A button
 diff --git a/TamaPoke.ino b/TamaPoke.ino
-index 8d24a9c6..02aedc8c 100644
+index 8d24a9c..669f1b1 100644
 --- a/TamaPoke.ino
 +++ b/TamaPoke.ino
-@@ -32,6 +32,7 @@
+@@ -29,9 +29,11 @@
+ #include "party.h"
+ #include "save.h"
+ #include "pet.h"
++#include "noart.h"   // Dennis build 4.1.7: speciesHasArt() for the honest totals
  #include "items.h"
  #include "inventory.h"
  #include "wild.h"
@@ -134,16 +138,16 @@ index 8d24a9c6..02aedc8c 100644
  #include "sdmon.h"
  #include "rtcbat.h"
  #include "nvsinfo.h"
-@@ -40,7 +41,7 @@
+@@ -40,7 +42,7 @@
  
  // Version del firmware. Subir este numero en cada release (y manifest.json para
  // el instalador web). Se muestra en la pantalla de ajustes y por serie al arrancar.
 -#define FW_VERSION "4.0"
-+#define FW_VERSION "4.1.6"    // Dennis build on eperdeme 4.0 -- see README "Dennis build"
++#define FW_VERSION "4.1.7"    // Dennis build on eperdeme 4.0 -- see README "Dennis build"
  
  Arduino_DataBus *bus = new Arduino_ESP32QSPI(
    LCD_CS, LCD_SCLK, LCD_SDIO0, LCD_SDIO1, LCD_SDIO2, LCD_SDIO3);
-@@ -68,6 +69,7 @@ struct {
+@@ -68,6 +70,7 @@ struct {
    float x = 233, targetX = 233;
  } beh;
  #define PET_GROUND 304  // linea de suelo de la mascota
@@ -151,7 +155,7 @@ index 8d24a9c6..02aedc8c 100644
  PmdMon galleryPmd;  // sprite grande de la vista detalle de la galeria (PMD/TPK2, legal)
  
  // galeria pokedex
-@@ -85,6 +87,22 @@ bool galleryDirty = false;
+@@ -85,6 +88,37 @@ bool galleryDirty = false;
  #define GAL_SPAN (GAL_HI - GAL_LO + 1)
  #define GAL_PAGES ((GAL_SPAN + GAL_PER_PAGE - 1) / GAL_PER_PAGE)
  uint8_t galleryRegion = 0;
@@ -159,22 +163,37 @@ index 8d24a9c6..02aedc8c 100644
 +// Dennis build: the "POKEDEX x/y" counters only count the regions whose pack is
 +// installed, so a Kanto+Johto card reads x/251 rather than x/1025. With no pack
 +// anywhere (or no SD) it falls back to the whole dex, as before.
++// Dennis build 4.1.7: only species that can actually be met count. 48 have no
++// art anywhere, never appear, and used to keep every total out of reach
++// (926/1025 for a player who had caught everything there was).
++uint16_t regionCatchable(uint16_t lo, uint16_t hi) {
++  if (hi > DEX_COUNT) hi = DEX_COUNT;
++  uint16_t n = 0;
++  for (uint16_t d = lo; d <= hi; d++) if (speciesHasArt((int16_t)d)) n++;
++  return n;
++}
++uint16_t regionCaught(uint16_t lo, uint16_t hi) {
++  if (hi > DEX_COUNT) hi = DEX_COUNT;
++  uint16_t n = 0;
++  for (uint16_t d = lo; d <= hi; d++) if (speciesHasArt((int16_t)d) && pet.isRegistered((int16_t)d)) n++;
++  return n;
++}
 +static int dexShownTotal() {
 +  int total = 0;
 +  for (uint8_t r = 0; r < GAL_REGIONS; r++)
-+    if (regionAvailable(r)) total += REGIONS[r].hi - REGIONS[r].lo + 1;
-+  return total ? total : DEX_COUNT;
++    if (regionAvailable(r)) total += regionCatchable(REGIONS[r].lo, REGIONS[r].hi);
++  return total ? total : regionCatchable(1, DEX_COUNT);
 +}
 +static int dexShownGot() {
 +  int got = 0; bool any = false;
 +  for (uint8_t r = 0; r < GAL_REGIONS; r++)
-+    if (regionAvailable(r)) { any = true; got += pet.registeredCountIn(REGIONS[r].lo, REGIONS[r].hi); }
-+  return any ? got : pet.registeredCount();
++    if (regionAvailable(r)) { any = true; got += regionCaught(REGIONS[r].lo, REGIONS[r].hi); }
++  return any ? got : regionCaught(1, DEX_COUNT);
 +}
  // Both the Pokedex and the gym ladder now open on a REGION CHOOSER rather than
  // dropping you into whichever region was last viewed. The vertical swipe that
  // changes region still works, but it is invisible, so on its own it meant the
-@@ -92,7 +110,12 @@ uint8_t galleryRegion = 0;
+@@ -92,7 +126,12 @@ uint8_t galleryRegion = 0;
  bool galleryPick = false;
  bool gymPick = false;
  uint8_t rpickPage = 0;      // the region chooser is paged; shared by all 3 modes
@@ -188,7 +207,7 @@ index 8d24a9c6..02aedc8c 100644
  // ---------------------------------------------------------------------------
  // POKEDEX FILTERS. A view setting, so RAM only -- deliberately NO save field:
  // every one of these is derived from data the save already holds, and a filter
-@@ -169,6 +192,7 @@ uint8_t boxSortCount() { return BSORT_COUNT; }
+@@ -169,6 +208,7 @@ uint8_t boxSortCount() { return BSORT_COUNT; }
  // yank the creature into the party immediately, which is a surprising amount to
  // happen from one tap -- and left nowhere to put a RELEASE button.
  uint8_t boxDetail = 0;        // box slot + 1 whose sheet is open
@@ -196,7 +215,7 @@ index 8d24a9c6..02aedc8c 100644
  // The RELEASE confirm, on whichever sheet is up. One flag rather than two,
  // because only one sheet can be open at a time and partyDetail/boxDetail
  // already say which.
-@@ -192,6 +216,15 @@ char partyBannerName[14] = "";
+@@ -192,6 +232,15 @@ char partyBannerName[14] = "";
  #define PSLOT_HUB_R 47
  #define PSLOT_PROMPT_Y 68
  
@@ -212,7 +231,7 @@ index 8d24a9c6..02aedc8c 100644
  bool clockOpen = false;       // pantalla de ajuste de hora (deslizar abajo)
  int clockH = 12, clockM = 0;  // hora en edicion
  // Settings is paged: 0 is the clock, 1 is sound/volume/brightness/language and
-@@ -406,6 +439,7 @@ Link lan;
+@@ -406,6 +455,7 @@ Link lan;
  #define RPICK_FOR_GYMS  0
  #define RPICK_FOR_DEX   1
  #define RPICK_FOR_START 2
@@ -220,7 +239,7 @@ index 8d24a9c6..02aedc8c 100644
  // Three rows is what the round panel fits above the BACK label. The dex now
  // lists four regions and will list more, so the chooser PAGES rather than
  // growing -- and every paged screen in this sketch has to be driven by
-@@ -597,6 +631,17 @@ int8_t btlTrainer = -1;      // index into TRAINERS, -1 = a one-off fight
+@@ -597,6 +647,17 @@ int8_t btlTrainer = -1;      // index into TRAINERS, -1 = a one-off fight
  bool btlHard = false;
  Combatant btlSquad[TRAINER_TEAM_MAX + 1];
  uint8_t btlSquadN = 0, btlSquadAt = 0;
@@ -238,7 +257,7 @@ index 8d24a9c6..02aedc8c 100644
  uint8_t btlFoeAt = 0;
  
  // ---------------------------------------------------------------------------
-@@ -618,6 +663,34 @@ uint8_t exploreRegion = 0xFF;
+@@ -618,6 +679,34 @@ uint8_t exploreRegion = 0xFF;
  #define EXPLORE_BTN_PAD 11
  bool bagOpen = false;
  uint8_t bagPage = 0;
@@ -273,7 +292,7 @@ index 8d24a9c6..02aedc8c 100644
  #define BAG_PER_PAGE 5
  #define BAG_ROW_Y(i) (112 + (i) * 58)
  
-@@ -747,7 +820,7 @@ static inline bool btlCellHit(int i, int16_t x, int16_t y) {
+@@ -747,7 +836,7 @@ static inline bool btlCellHit(int i, int16_t x, int16_t y) {
  #define TRAIN_ROW_MEMO 3
  
  // Settings page 2's rows. See the essay above renderClockOptions().
@@ -282,7 +301,7 @@ index 8d24a9c6..02aedc8c 100644
  #define SET_ROW_H UI_TAP_MIN
  #define SET_ROW_GAP 10
  #define SET_ROW_Y(i) (92 + (i) * (SET_ROW_H + SET_ROW_GAP))
-@@ -757,6 +830,7 @@ static inline bool btlCellHit(int i, int16_t x, int16_t y) {
+@@ -757,6 +846,7 @@ static inline bool btlCellHit(int i, int16_t x, int16_t y) {
  #define SET_BRIGHT 2
  #define SET_LANG  3
  #define SET_RESET 4
@@ -290,7 +309,7 @@ index 8d24a9c6..02aedc8c 100644
  
  // The memory game. See the essay above startMemoGame().
  #define MEMO_PADS 4
-@@ -1040,6 +1114,101 @@ void flushBeforePowerLoss(const char *why) {
+@@ -1040,6 +1130,101 @@ void flushBeforePowerLoss(const char *why) {
    pet.flushSave();
  }
  
@@ -392,7 +411,7 @@ index 8d24a9c6..02aedc8c 100644
  void setup() {
    Serial.setRxBufferSize(8192);  // la transferencia a SD llega en bloques de 2 KB
    Serial.begin(115200);
-@@ -1102,6 +1271,8 @@ void setup() {
+@@ -1102,6 +1287,8 @@ void setup() {
    // to whichever creature the swap actually settled on.
    focusRecover();
    sdBegin();
@@ -401,7 +420,7 @@ index 8d24a9c6..02aedc8c 100644
    thumbs.load();
  
    // reloj real: aplica el tiempo que estuvo apagado
-@@ -1117,7 +1288,9 @@ void setup() {
+@@ -1117,7 +1304,9 @@ void setup() {
      e = rtcEpoch();                  // igual, solo importan las diferencias)
      Serial.println("RTC sin hora: sembrado, sin progresion offline esta vez");
    }
@@ -412,7 +431,7 @@ index 8d24a9c6..02aedc8c 100644
  
    audioBegin();  // ES8311 + I2S + amplificador (suena un jingle de arranque)
  
-@@ -1174,7 +1347,13 @@ void ensureMon() {
+@@ -1174,7 +1363,13 @@ void ensureMon() {
  
  void loop() {
    uint32_t now = millis();
@@ -427,7 +446,7 @@ index 8d24a9c6..02aedc8c 100644
  
    // The link is pumped here rather than from the LAN screen, because it has to
    // keep running through the battle too: linkNowPoll() drains what the radio
-@@ -1222,11 +1401,18 @@ void loop() {
+@@ -1222,11 +1417,18 @@ void loop() {
    // A farewell or release just finished: the creature is waiting for a slot.
    // With room it simply joins; with a full party the player is taken straight
    // to the party screen to choose who it replaces, or to let it go.
@@ -447,7 +466,7 @@ index 8d24a9c6..02aedc8c 100644
        partyBannerUntil = now + 3500;
        pet.clearEnded();
        sfxPlay(SFX_MEDAL);
-@@ -1246,7 +1432,7 @@ void loop() {
+@@ -1246,7 +1448,7 @@ void loop() {
      pwrPoll();
      if (pwrShortPressed()) {
        screenOff = !screenOff;
@@ -456,7 +475,7 @@ index 8d24a9c6..02aedc8c 100644
        if (!screenOff) lastInteract = now;
      }
      // The hold is on its way to the AXP2101's own power-off, and the firmware
-@@ -1324,9 +1510,22 @@ void updateBrightness(uint32_t now) {
+@@ -1324,9 +1526,22 @@ void updateBrightness(uint32_t now) {
    if (pet.evolving() || pet.ceremony || pet.eating() || pet.showHeart()) {
      lastInteract = now;
    }
@@ -480,7 +499,7 @@ index 8d24a9c6..02aedc8c 100644
    uint8_t target = pet.sleeping ? 25 : base;
    if (dimStage == 1) target = pet.sleeping ? 10 : 60;
    else if (dimStage == 2) target = 8;
-@@ -1350,7 +1549,49 @@ void handleSerial() {
+@@ -1350,7 +1565,49 @@ void handleSerial() {
    if (line.length() == 0) return;
    if (sdSerialCommand(line)) return;
  
@@ -531,7 +550,7 @@ index 8d24a9c6..02aedc8c 100644
      pet.eggTap(); pet.eggTap(); pet.eggTap();
      Serial.println("DONE");
    } else if (line.startsWith("SPEC ")) {
-@@ -1659,8 +1900,8 @@ void handleSerial() {
+@@ -1659,8 +1916,8 @@ void handleSerial() {
      // The same two lines the periodic heartbeat prints. Typed on a board is when
      // you actually want them, and a console HEALTH that reported LESS than the
      // automatic one is § "A rule enforced in one path but not in its twin".
@@ -542,7 +561,7 @@ index 8d24a9c6..02aedc8c 100644
      nvsReport("health");
      gNvsLow = nvsLowOnSpace();
      Serial.println("DONE");
-@@ -1721,6 +1962,17 @@ void handleTouch() {
+@@ -1721,6 +1978,17 @@ void handleTouch() {
      return;
    }
  
@@ -560,7 +579,7 @@ index 8d24a9c6..02aedc8c 100644
    if (pressed && !wasPressed) {  // empieza el gesto
      tX0 = tXl = x;
      tY0 = tYl = y;
-@@ -1840,6 +2092,10 @@ void onSwipeV(int dir) {
+@@ -1840,6 +2108,10 @@ void onSwipeV(int dir) {
        return;
      }
      if (galleryPick) { if (back) uiTileGo(TILE_PET); return; }
@@ -571,7 +590,7 @@ index 8d24a9c6..02aedc8c 100644
      if (back) {
        galleryPick = true; rpickPage = 0;
        galleryPmd.unload();
-@@ -1847,7 +2103,11 @@ void onSwipeV(int dir) {
+@@ -1847,7 +2119,11 @@ void onSwipeV(int dir) {
        sfxPlay(SFX_TAP);
        return;
      }
@@ -584,7 +603,7 @@ index 8d24a9c6..02aedc8c 100644
      galleryPage = 0;
      galleryClampPage();
      galleryDirty = true;
-@@ -1858,7 +2118,7 @@ void onSwipeV(int dir) {
+@@ -1858,7 +2134,7 @@ void onSwipeV(int dir) {
    if (partyOpen) {
      if (partyDetail) { if (back) partyDetail = 0; return; }
      if (back) {
@@ -593,7 +612,7 @@ index 8d24a9c6..02aedc8c 100644
        uiTileGo(TILE_PET);
      }
      return;
-@@ -1885,7 +2145,7 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
+@@ -1885,7 +2161,7 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
    gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
    char head[36];
    snprintf(head, sizeof(head), "%s%s Lv.%u", m.shiny ? "*" : "",
@@ -602,7 +621,7 @@ index 8d24a9c6..02aedc8c 100644
    gfx->setTextColor(d.accent);
    gfx->setTextSize(2);
    gfx->setCursor(CX - (int)strlen(head) * 6, 40);
-@@ -1908,6 +2168,17 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
+@@ -1908,6 +2184,17 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
    gfx->setTextSize(1);
    gfx->setCursor(CX - (int)strlen(st) * 3, 300);
    gfx->print(st);
@@ -620,7 +639,7 @@ index 8d24a9c6..02aedc8c 100644
  
    // Which creature you are RAISING is now a choice you can make at any time.
    // It is a true exchange -- the one on the main screen takes the slot this one
-@@ -1956,7 +2227,7 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
+@@ -1956,7 +2243,7 @@ void renderMonSheet(const PartyMon &m, bool fromBox) {
    // a farewell, it does not join anything, and there is no undo.
    if (releaseConfirm) {
      char q[40];
@@ -629,7 +648,7 @@ index 8d24a9c6..02aedc8c 100644
      drawConfirmPanel(q, T(S_RELEASE_GONE), nullptr, UI_BAR_BAD,
                       T(S_RELEASE_BTN), UI_BAR_BAD, UI_WHITE,
                       T(S_NO), UI_TRACK, UI_INK);
-@@ -2077,6 +2348,12 @@ bool monSheetBtn(int16_t x, int16_t y, bool left) {
+@@ -2077,6 +2364,12 @@ bool monSheetBtn(int16_t x, int16_t y, bool left) {
    return x >= x0 && x <= x0 + w;
  }
  
@@ -642,7 +661,7 @@ index 8d24a9c6..02aedc8c 100644
  // YES / NO on the release confirm. Returns true when the tap was consumed. The
  // caller swallows everything else while it is up: a modal that leaks a miss
  // through to what is drawn underneath is precisely how an irreversible action
-@@ -2087,6 +2364,9 @@ bool monSheetConfirmTap(int16_t x, int16_t y, bool fromBox) {
+@@ -2087,6 +2380,9 @@ bool monSheetConfirmTap(int16_t x, int16_t y, bool fromBox) {
    uiConfirmRects(&c1t, &c1b, &c2t, &c2b);
    if (x < CONFIRM_BTN_X || x > CONFIRM_BTN_X + CONFIRM_BTN_W) return false;
    if (y >= c1t && y <= c1b) {            // YES -- and it does not come back
@@ -652,7 +671,7 @@ index 8d24a9c6..02aedc8c 100644
      if (fromBox) { party.boxReleaseAt(boxDetail - 1); boxDetail = 0; }
      else { party.releaseAt(partyDetail - 1); partyDetail = 0; }
      // A half-finished swap named a slot that may now be empty, so disarm both
-@@ -2192,7 +2472,7 @@ void partyTap(int16_t x, int16_t y) {
+@@ -2192,7 +2488,7 @@ void partyTap(int16_t x, int16_t y) {
         x >= PARTYCLOSE_X && x <= PARTYCLOSE_X + PARTYCLOSE_W) || y < 34) {
      if (partyPick) {                 // declined the swap: the pet is let go
        partyPick = false;
@@ -661,7 +680,7 @@ index 8d24a9c6..02aedc8c 100644
      }
      partyOpen = false;
      sfxPlay(SFX_TAP);
-@@ -2219,9 +2499,11 @@ void partyTap(int16_t x, int16_t y) {
+@@ -2219,9 +2515,11 @@ void partyTap(int16_t x, int16_t y) {
        sfxPlay(SFX_TAP);
        return;
      }
@@ -674,7 +693,7 @@ index 8d24a9c6..02aedc8c 100644
      partyBannerUntil = millis() + 3500;
      pet.clearEnded();
      partyPick = false;
-@@ -2251,7 +2533,7 @@ void onSwipe(int dir) {
+@@ -2251,7 +2549,7 @@ void onSwipe(int dir) {
      // A sheet drawn on top of a tile closes first; the axis is underneath it.
      if (galleryDetail) { galleryDetail = 0; galleryPmd.unload(); galleryDirty = true; return; }
      if (partyDetail) { partyDetail = 0; return; }
@@ -683,7 +702,7 @@ index 8d24a9c6..02aedc8c 100644
      if (pet.ceremony || confirmUntil) return;
      int n = t - dir;   // the content follows the finger
      // IT BUMPS. This is the whole point of the axis: a horizontal swipe can no
-@@ -2451,7 +2733,7 @@ void onTap(int16_t x, int16_t y) {
+@@ -2451,7 +2749,7 @@ void onTap(int16_t x, int16_t y) {
        sfxPlay(SFX_TAP);
        menuOpen = false;
        if (i == 0) { cardOpen = true; cardPage = 1; }   // straight to the stats page
@@ -692,7 +711,7 @@ index 8d24a9c6..02aedc8c 100644
        else if (i == 2) { galleryOpen = true; galleryPick = true; galleryPage = 0; rpickPage = 0; galleryDetail = 0; galleryDirty = true; }
        else if (i == 3) { openClock(); }
        else if (i == 4) {
-@@ -2491,7 +2773,12 @@ void onTap(int16_t x, int16_t y) {
+@@ -2491,7 +2789,12 @@ void onTap(int16_t x, int16_t y) {
    if (galleryOpen) {
      if (galleryPick) {
        int r = regionPickTap(x, y, RPICK_FOR_DEX);
@@ -706,7 +725,7 @@ index 8d24a9c6..02aedc8c 100644
          galleryRegion = (uint8_t)r;
          galleryPage = 0;
          galleryClampPage();
-@@ -2504,6 +2791,7 @@ void onTap(int16_t x, int16_t y) {
+@@ -2504,6 +2807,7 @@ void onTap(int16_t x, int16_t y) {
        }
        return;
      }
@@ -714,7 +733,7 @@ index 8d24a9c6..02aedc8c 100644
      galleryTap(x, y);
      return;
    }
-@@ -2773,7 +3061,7 @@ void renderStarterSelect() {
+@@ -2773,7 +3077,7 @@ void renderStarterSelect() {
      gfx->setTextColor(UI_INK);
      gfx->setTextSize(3);
      gfx->setCursor(178, ry + 24);
@@ -723,7 +742,7 @@ index 8d24a9c6..02aedc8c 100644
    }
    gfx->flush();
  }
-@@ -2898,7 +3186,9 @@ static uint8_t *uiRimTarget(uint8_t *pages) {
+@@ -2898,7 +3202,9 @@ static uint8_t *uiRimTarget(uint8_t *pages) {
      case SCR_GYM:     p = &gymPage;     n = (TRAINER_COUNT + GYM_ROWS - 1) / GYM_ROWS; break;
      // galleryPages(), not GAL_PAGES: with a filter on, the grid is shorter than
      // the region, and paging past the filtered end draws an empty screen.
@@ -734,7 +753,7 @@ index 8d24a9c6..02aedc8c 100644
      case SCR_PLAYER:  p = &playerPage;  n = PLAYER_PAGES; break;
      case SCR_BOX:     p = &boxPage;     n = BOX_SLOTS / BOX_PER_PAGE; break;
      case SCR_BAGSCR:  p = &bagPage;     n = bagPages(); break;
-@@ -3087,6 +3377,17 @@ void renderExplore() {
+@@ -3087,6 +3393,17 @@ void renderExplore() {
    gfx->setTextSize(2);
    gfx->setCursor(CX - (int)strlen(dif) * 6, EXPLORE_DIF_Y + 14);
    gfx->print(dif);
@@ -752,7 +771,7 @@ index 8d24a9c6..02aedc8c 100644
  
    bool live = !pet.isEgg() && pet.ceremony == CER_NONE;
    gfx->fillRoundRect(EXPLORE_BTN_X, EXPLORE_BTN_Y, EXPLORE_BTN_W, EXPLORE_BTN_H,
-@@ -3165,6 +3466,10 @@ void render() {
+@@ -3165,6 +3482,10 @@ void render() {
      renderTransfer();
      return;
    }
@@ -763,7 +782,7 @@ index 8d24a9c6..02aedc8c 100644
    if (pet.awaitingStarter()) {  // primera partida: region y luego inicial
      if (!starterRegionDone) renderRegionPick(RPICK_FOR_START);
      else renderStarterSelect();
-@@ -3172,6 +3477,7 @@ void render() {
+@@ -3172,6 +3493,7 @@ void render() {
    }
    if (galleryOpen) {
      if (galleryPick) { renderRegionPick(RPICK_FOR_DEX); return; }
@@ -771,7 +790,7 @@ index 8d24a9c6..02aedc8c 100644
      renderGallery();
      return;
    }
-@@ -3264,7 +3570,7 @@ void render() {
+@@ -3264,7 +3586,7 @@ void render() {
      const char *msg = (pet.ceremony == CER_FAREWELL) ? T(S_FAREWELL)
                        : (pet.ceremony == CER_RUNAWAY) ? T(S_RUNAWAY)
                                                        : T(S_GOODBYE);
@@ -780,7 +799,7 @@ index 8d24a9c6..02aedc8c 100644
      drawCeremony();
      gfx->flush();
      return;
-@@ -3286,7 +3592,7 @@ void render() {
+@@ -3286,7 +3608,7 @@ void render() {
        gfx->print(rar);
      }
      char reg[24];
@@ -789,7 +808,7 @@ index 8d24a9c6..02aedc8c 100644
      gfx->fillRect(0, 312, 466, 154, gNight ? UI_BG_NIGHT : UI_BG_DAY);
      gfx->setTextColor(inkColor());
      gfx->setTextSize(2);
-@@ -3301,7 +3607,7 @@ void render() {
+@@ -3301,7 +3623,7 @@ void render() {
    } else {
      const DexEntry &d = DEX_TBL[pet.speciesId];
      char name[28];
@@ -798,7 +817,7 @@ index 8d24a9c6..02aedc8c 100644
      snprintf(name, sizeof(name), T(S_NAME_FMT), pet.shiny ? "*" : "", base, pet.level());
      drawHeader(name, gNight ? UI_INK_NIGHT : d.accent, statusMsg());
      drawStreakBadge();
-@@ -3347,7 +3653,7 @@ void render() {
+@@ -3347,7 +3669,7 @@ void render() {
        gfx->fillRoundRect(94, 168, 278, 152, 16, UI_WHITE);
        gfx->drawRoundRect(94, 168, 278, 152, 16, UI_INK);
        char q[28];
@@ -807,7 +826,7 @@ index 8d24a9c6..02aedc8c 100644
        gfx->setTextColor(UI_INK);
        gfx->setTextSize(2);
        gfx->setCursor(CX - strlen(q) * 6, 196);
-@@ -3964,6 +4270,16 @@ static void renderClockOptions() {
+@@ -3964,6 +4286,16 @@ static void renderClockOptions() {
      gfx->setCursor(CX - (int)strlen(T(S_RESET)) * 6, ry + rh / 2 - 8);
      gfx->print(T(S_RESET));
    }
@@ -824,7 +843,7 @@ index 8d24a9c6..02aedc8c 100644
  }
  
  void renderClock() {
-@@ -4056,6 +4372,11 @@ void clockTap(int16_t x, int16_t y) {
+@@ -4056,6 +4388,11 @@ void clockTap(int16_t x, int16_t y) {
          sfxPlay(SFX_DENY);
          return;
        }
@@ -836,7 +855,7 @@ index 8d24a9c6..02aedc8c 100644
      }
      return;
    }
-@@ -4123,7 +4444,7 @@ void drawMedalBadge(int x, int y, int i) {
+@@ -4123,7 +4460,7 @@ void drawMedalBadge(int x, int y, int i) {
  // pagina 0: perfil (retrato grande, identidad, racha, vinculo, baya)
  void renderCardProfile() {
    const DexEntry &d = DEX_TBL[pet.speciesId];
@@ -845,7 +864,7 @@ index 8d24a9c6..02aedc8c 100644
    char head[26];
    snprintf(head, sizeof(head), T(S_NAME_FMT), pet.shiny ? "*" : "", nm, pet.level());
    gfx->setTextColor(d.accent);
-@@ -4137,8 +4458,8 @@ void renderCardProfile() {
+@@ -4137,8 +4474,8 @@ void renderCardProfile() {
    if (pet.nick[0]) {  // especie real bajo el apodo
      gfx->setTextColor(UI_INK_SOFT);
      gfx->setTextSize(2);
@@ -856,7 +875,7 @@ index 8d24a9c6..02aedc8c 100644
    }
  
    // retrato grande animado
-@@ -4468,6 +4789,7 @@ static void buildSquad(uint8_t maxLvl, uint8_t maxCount, uint16_t mask) {
+@@ -4468,6 +4805,7 @@ static void buildSquad(uint8_t maxLvl, uint8_t maxCount, uint16_t mask) {
      Pet tmp = pet;                       // a copy: the real pet is untouched
      if (maxLvl && tmp.level() > maxLvl)
        tmp.ageMinutes = (uint32_t)(maxLvl - 1) * MINUTES_PER_LEVEL;
@@ -864,7 +883,7 @@ index 8d24a9c6..02aedc8c 100644
      combatantFromPet(btlSquad[btlSquadN++], tmp);
      btlPetIn = true;      // the training reward goes to whoever fought for it
    }
-@@ -4475,8 +4797,11 @@ static void buildSquad(uint8_t maxLvl, uint8_t maxCount, uint16_t mask) {
+@@ -4475,8 +4813,11 @@ static void buildSquad(uint8_t maxLvl, uint8_t maxCount, uint16_t mask) {
      if (party.slots[i].empty() || !(mask & (1 << (i + 1)))) continue;
      PartyMon m = party.slots[i];
      if (maxLvl && m.level > maxLvl) m.level = maxLvl;
@@ -876,7 +895,7 @@ index 8d24a9c6..02aedc8c 100644
    if (btlSquadN) btlYou = btlSquad[0];
  }
  
-@@ -4497,8 +4822,11 @@ void startLinkBattle() {
+@@ -4497,8 +4838,11 @@ void startLinkBattle() {
    // silently diverge if anything changed between offering and starting.
    btlSquadN = 0;
    btlSquadAt = 0;
@@ -889,7 +908,7 @@ index 8d24a9c6..02aedc8c 100644
    if (!btlSquadN) return;
    btlYou = btlSquad[0];
    btlLink = true;
-@@ -4713,9 +5041,11 @@ static void wildGrantDrops() {
+@@ -4713,9 +5057,11 @@ static void wildGrantDrops() {
      if (!total) break;
      ItemKey k = bag.weightedDrop((uint32_t)random(total), wildDrops, wildDropN);
      if (!k) break;
@@ -903,7 +922,7 @@ index 8d24a9c6..02aedc8c 100644
    }
  }
  
-@@ -4725,9 +5055,10 @@ static void wildGrantDrops() {
+@@ -4725,9 +5071,10 @@ static void wildGrantDrops() {
  // twin, and "which slot does a creature take" is exactly that shape.
  static void wildStoreCaught() {
    PartyMon m = wildToPartyMon();
@@ -917,7 +936,7 @@ index 8d24a9c6..02aedc8c 100644
    if (party.add(m) || party.boxAdd(m)) return;
    // Both full: hand it to the chooser the endings already own. endedKind is
    // only ever tested against CER_NONE by that flow, so this is the intended
-@@ -4737,15 +5068,23 @@ static void wildStoreCaught() {
+@@ -4737,15 +5084,23 @@ static void wildStoreCaught() {
    pet.setEnded(m, CER_RELEASE);
  }
  
@@ -945,7 +964,7 @@ index 8d24a9c6..02aedc8c 100644
    if (random(100) < chance) {
      wildCaught = true;
      btlOver = true;
-@@ -4754,7 +5093,9 @@ static void btlThrowBall(ItemKey k) {
+@@ -4754,7 +5109,9 @@ static void btlThrowBall(ItemKey k) {
      audioMusic(MUS_VICTORY);
      sfxPlay(SFX_VICTORY);
      btlSay(T(S_CAUGHT), btlFoe.name);
@@ -955,7 +974,7 @@ index 8d24a9c6..02aedc8c 100644
      return;
    }
    sfxPlay(SFX_DENY);
-@@ -4766,12 +5107,20 @@ static void btlThrowBall(ItemKey k) {
+@@ -4766,12 +5123,20 @@ static void btlThrowBall(ItemKey k) {
  // Combatant, so like every ailment it is battle-only and is never written back.
  static void btlUseItem(ItemKey k) {
    const ItemEntry &e = itemEntry(k);
@@ -979,7 +998,7 @@ index 8d24a9c6..02aedc8c 100644
      uint32_t hp = (uint32_t)btlYou.hp + (uint16_t)e.param;
      btlYou.hp = hp > btlYou.maxHp ? btlYou.maxHp : (uint16_t)hp;
    } else {
-@@ -4781,13 +5130,82 @@ static void btlUseItem(ItemKey k) {
+@@ -4781,13 +5146,82 @@ static void btlUseItem(ItemKey k) {
    }
    btlMenu = 0;
    sfxPlay(SFX_TAP);
@@ -1063,7 +1082,7 @@ index 8d24a9c6..02aedc8c 100644
    // Against another device the opponent's move comes off the wire, never from
    // the AI -- and the host is the only side that runs this at all.
    uint8_t foeMove;
-@@ -4902,8 +5320,8 @@ static void btlResolve(uint8_t yourMove) {
+@@ -4902,8 +5336,8 @@ static void btlResolve(uint8_t yourMove) {
      if (btlLink) { btlSay("%s", btlWon ? T(S_BTL_WIN) : T(S_BTL_LOSE)); return; }
      // A wild win reports its drops as narration rather than on the win screen:
      // that screen is the badge ceremony, and it has no badge to show.
@@ -1074,7 +1093,7 @@ index 8d24a9c6..02aedc8c 100644
      btlSay("%s", T(S_BTL_LOSE));
    }
  }
-@@ -4917,6 +5335,7 @@ static void btlHpBar(int x, int y, int w, const Combatant &c, uint16_t shown) {
+@@ -4917,6 +5351,7 @@ static void btlHpBar(int x, int y, int w, const Combatant &c, uint16_t shown) {
    gfx->drawRoundRect(x, y, w, 14, 4, UI_INK);
  }
  
@@ -1082,7 +1101,7 @@ index 8d24a9c6..02aedc8c 100644
  static void btlSide(int tx, int ty, int sx, int sy, const Combatant &c, uint8_t who) {
    // the scenes are busy, so the name and bar sit on their own plate rather
    // than fighting the artwork for contrast
-@@ -4929,10 +5348,39 @@ static void btlSide(int tx, int ty, int sx, int sy, const Combatant &c, uint8_t
+@@ -4929,10 +5364,39 @@ static void btlSide(int tx, int ty, int sx, int sy, const Combatant &c, uint8_t
    gfx->setTextSize(1);
    gfx->setCursor(tx, ty);
    gfx->print(l);
@@ -1122,7 +1141,7 @@ index 8d24a9c6..02aedc8c 100644
    if (who == 0) {                 // your own numbers, as the games do
      char hp[16];
      snprintf(hp, sizeof(hp), "%u/%u", btlHpShown[who], c.maxHp);
-@@ -5021,7 +5469,7 @@ void renderWin() {
+@@ -5021,7 +5485,7 @@ void renderWin() {
    gfx->print(T(S_BTL_WIN));
  
    char l[40];
@@ -1131,7 +1150,7 @@ index 8d24a9c6..02aedc8c 100644
    gfx->setTextColor(UI_INK);
    gfx->setTextSize(2);
    gfx->setCursor(CX - (int)strlen(l) * 6, 96);
-@@ -5084,6 +5532,24 @@ void renderWin() {
+@@ -5084,6 +5548,24 @@ void renderWin() {
      gfx->setCursor(CX - (int)strlen(T(S_WIN_MAXED)) * 3, 348);
      gfx->print(T(S_WIN_MAXED));
    }
@@ -1156,7 +1175,7 @@ index 8d24a9c6..02aedc8c 100644
  
    gfx->setTextColor(UI_INK_SOFT);
    gfx->setTextSize(2);
-@@ -5092,6 +5558,38 @@ void renderWin() {
+@@ -5092,6 +5574,38 @@ void renderWin() {
    gfx->flush();
  }
  
@@ -1195,7 +1214,7 @@ index 8d24a9c6..02aedc8c 100644
  void renderBattle() {
    if (btlWinUntil) { renderWin(); return; }
    btlEaseBars();
-@@ -5105,6 +5603,8 @@ void renderBattle() {
+@@ -5105,6 +5619,8 @@ void renderBattle() {
    // name like BLASTOISE was losing its first characters off the edge
    btlSide(82, 82, 300, 40, btlFoe, 1);    // foe reads top-left, sprite top-right
    btlSide(250, 190, 76, 168, btlYou, 0);  // you read bottom-right, sprite bottom-left
@@ -1204,7 +1223,7 @@ index 8d24a9c6..02aedc8c 100644
  
    // Waiting on the other device. Without this the screen is identical to the
    // one where it is your turn, so a tap that has been sent and a tap that was
-@@ -5186,14 +5686,24 @@ void renderBattle() {
+@@ -5186,14 +5702,24 @@ void renderBattle() {
        gfx->fillRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, live ? UI_BG_DAY : UI_TRACK);
        gfx->drawRoundRect(x, y, BTL_CELL_W, BTL_CELL_H, 10, live ? UI_INK : 0x8410);
        gfx->setTextColor(live ? UI_INK : 0x8410);
@@ -1231,7 +1250,7 @@ index 8d24a9c6..02aedc8c 100644
        shown++;
      }
      if (!shown) {
-@@ -5274,10 +5784,11 @@ static void btlDoSwap() {
+@@ -5274,10 +5800,11 @@ static void btlDoSwap() {
      btlSyncSprite(1, btlFoe);
      btlLungeUntil[1] = btlHitUntil[1] = btlFaintUntil[1] = 0;
      btlEnterUntil[1] = now + BTL_ENTER_MS;
@@ -1244,7 +1263,7 @@ index 8d24a9c6..02aedc8c 100644
      btlYou = btlSquad[btlSquadAt];
      btlHpShown[0] = btlYou.hp;
      btlSyncSprite(0, btlYou);
-@@ -5294,6 +5805,7 @@ static void btlSwitchTo(uint8_t i) {
+@@ -5294,6 +5821,7 @@ static void btlSwitchTo(uint8_t i) {
    if (i >= btlSquadN || i == btlSquadAt) return;
    btlSquad[btlSquadAt] = btlYou;
    btlSquadAt = i;
@@ -1252,7 +1271,7 @@ index 8d24a9c6..02aedc8c 100644
    btlYou = btlSquad[i];
    btlHpShown[0] = btlYou.hp;
    btlSyncSprite(0, btlYou);
-@@ -5561,7 +6073,7 @@ static void renderPlayerBadges() {
+@@ -5561,7 +6089,7 @@ static void renderPlayerBadges() {
    snprintf(l, sizeof(l), T(S_STREAK_FMT), pet.streak, pet.bestStreak);
    gfx->setCursor(CX - (int)strlen(l) * 6, 286);
    gfx->print(l);
@@ -1261,7 +1280,7 @@ index 8d24a9c6..02aedc8c 100644
    gfx->setCursor(CX - (int)strlen(l) * 6, 312);
    gfx->print(l);
    snprintf(l, sizeof(l), T(S_PARTY_FMT), party.count());
-@@ -6099,11 +6611,11 @@ static void drawPickCell(uint8_t n, int x, int y, uint8_t capLvl) {
+@@ -6099,11 +6627,11 @@ static void drawPickCell(uint8_t n, int x, int y, uint8_t capLvl) {
    int16_t dex; uint16_t lvl; const char *nm; bool shiny;
    if (n == 0) {
      dex = pet.speciesId; lvl = pet.level(); shiny = pet.shiny;
@@ -1275,7 +1294,7 @@ index 8d24a9c6..02aedc8c 100644
    }
    if (capLvl && lvl > capLvl) lvl = capLvl;   // show the level it will FIGHT at
    gfx->fillRoundRect(x, y, PICK_CELL_W, PICK_CELL_H, 10, on ? UI_BG_DAY : UI_TRACK);
-@@ -6148,7 +6660,7 @@ void renderPick() {
+@@ -6148,7 +6676,7 @@ void renderPick() {
      const Trainer &t = PICK_TRAINERS[pickTrainer];
      for (int k = 0; k < t.count; k++)
        if (t.team[k].level > top) top = t.team[k].level;
@@ -1284,7 +1303,7 @@ index 8d24a9c6..02aedc8c 100644
    }
    gfx->setTextColor(UI_INK);
    gfx->setTextSize(2);
-@@ -6433,11 +6945,11 @@ void renderGyms() {
+@@ -6433,11 +6961,11 @@ void renderGyms() {
      gfx->setTextColor(open_ ? UI_INK : UI_TRACK);
      gfx->setTextSize(2);
      gfx->setCursor(rx + 14, y + 8);
@@ -1298,7 +1317,7 @@ index 8d24a9c6..02aedc8c 100644
      // the level of the strongest creature: the honest measure of the wall
      uint8_t top = 0;
      for (int k = 0; k < t.count; k++)
-@@ -6558,12 +7070,44 @@ static_assert(RPICK_DOTS_Y - RPICK_DOT_R > RPICK_Y(RPICK_PER_PAGE - 1) + RPICK_H
+@@ -6558,12 +7086,44 @@ static_assert(RPICK_DOTS_Y - RPICK_DOT_R > RPICK_Y(RPICK_PER_PAGE - 1) + RPICK_H
  // Sinnoh landed it had no row, while the gallery's vertical swipe cycled it
  // happily: built, reachable, and looking absent. That is the exact failure the
  // chooser was added to prevent.
@@ -1345,7 +1364,7 @@ index 8d24a9c6..02aedc8c 100644
    uint8_t p = (uint8_t)((n + RPICK_PER_PAGE - 1) / RPICK_PER_PAGE);
    return p ? p : 1;
  }
-@@ -6598,6 +7142,8 @@ static bool rpickSwipe(int dir) {
+@@ -6598,6 +7158,8 @@ static bool rpickSwipe(int dir) {
  static void renderRegionPick(uint8_t mode) {
    bool forGyms = (mode == RPICK_FOR_GYMS);
    uint8_t nreg = rpickRegions(mode);
@@ -1354,7 +1373,7 @@ index 8d24a9c6..02aedc8c 100644
    uint8_t pages = rpickPageCount(mode);
    if (rpickPage >= pages) rpickPage = 0;
    uint8_t first = (uint8_t)(rpickPage * RPICK_PER_PAGE);
-@@ -6606,16 +7152,32 @@ static void renderRegionPick(uint8_t mode) {
+@@ -6606,16 +7168,32 @@ static void renderRegionPick(uint8_t mode) {
    char ttl[40];
    if (mode == RPICK_FOR_START) snprintf(ttl, sizeof(ttl), "%s", T(S_CHOOSE_REGION));
    else if (forGyms) snprintf(ttl, sizeof(ttl), "%s", T(S_GYMS));
@@ -1390,7 +1409,18 @@ index 8d24a9c6..02aedc8c 100644
      // The sprite pack is the gate. A region without it is drawn GREYED with a
      // reason rather than dropped from the list: hiding it would say "this
      // region does not exist" when what we mean is "download its pack".
-@@ -6697,9 +7259,15 @@ int uiRegionRowsPerPage() { return RPICK_PER_PAGE; }
+@@ -6649,8 +7227,8 @@ static void renderRegionPick(uint8_t mode) {
+       snprintf(sub, sizeof(sub), T(S_BADGES_FMT), pet.badgeCountIn(i, gymHard));
+     else if (mode == RPICK_FOR_DEX)
+       snprintf(sub, sizeof(sub), "%u/%u",
+-               pet.registeredCountIn(REGIONS[i].lo, REGIONS[i].hi),
+-               (unsigned)(REGIONS[i].hi - REGIONS[i].lo + 1));
++               regionCaught(REGIONS[i].lo, REGIONS[i].hi),
++               (unsigned)regionCatchable(REGIONS[i].lo, REGIONS[i].hi));
+     if (sub[0]) {
+       gfx->setTextColor(UI_INK_SOFT);
+       gfx->setTextSize(2);
+@@ -6697,9 +7275,15 @@ int uiRegionRowsPerPage() { return RPICK_PER_PAGE; }
  int regionPickTap(int16_t x, int16_t y, uint8_t mode) {
    if (x < RPICK_X || x > RPICK_X + RPICK_W) return -1;
    uint8_t nreg = rpickRegions(mode);
@@ -1408,7 +1438,7 @@ index 8d24a9c6..02aedc8c 100644
      if (y >= RPICK_Y(row) && y <= RPICK_Y(row) + RPICK_H) {
        // Every mode, gyms included -- the draw path greys the row, so the tap path
        // has to refuse it or the two disagree and a greyed row still works.
-@@ -6719,7 +7287,7 @@ void renderLearn() {
+@@ -6719,7 +7303,7 @@ void renderLearn() {
    gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
    uint8_t mv = pet.learnOffer();
    char head[40];
@@ -1417,7 +1447,7 @@ index 8d24a9c6..02aedc8c 100644
    snprintf(head, sizeof(head), T(S_LEARN_Q), nm);
    gfx->setTextColor(UI_INK);
    gfx->setTextSize(1);
-@@ -6874,8 +7442,8 @@ void renderCard() {
+@@ -6874,8 +7458,8 @@ void renderCard() {
  static void menuRowLabel(int i, char *out, size_t n) {
    switch (i) {
      case 0: snprintf(out, n, "%s", T(S_STATS)); break;
@@ -1428,7 +1458,7 @@ index 8d24a9c6..02aedc8c 100644
      case 3: snprintf(out, n, "%s", T(S_SETTINGS)); break;
      case 4: snprintf(out, n, "%s", T(S_RETIRE)); break;
      default: snprintf(out, n, "%s", T(S_CLOSE)); break;
-@@ -6991,6 +7559,10 @@ void focusRecover() {
+@@ -6991,6 +7575,10 @@ void focusRecover() {
  // How many pages the field bag needs. One even when empty, so the screen can
  // say so instead of drawing nothing and reading as a crash.
  uint8_t bagPages() {
@@ -1439,7 +1469,7 @@ index 8d24a9c6..02aedc8c 100644
    uint8_t n = bag.distinctCount();
    return n ? (uint8_t)((n + BAG_PER_PAGE - 1) / BAG_PER_PAGE) : 1;
  }
-@@ -7011,8 +7583,16 @@ static void bagSay(const char *fmt, const char *arg) {
+@@ -7011,8 +7599,16 @@ static void bagSay(const char *fmt, const char *arg) {
  // Applies a field item to the live pet. Returns false when the item was valid
  // but had nothing to do -- a fully trained stat, say -- which the caller reports
  // rather than silently consuming the item.
@@ -1457,7 +1487,7 @@ index 8d24a9c6..02aedc8c 100644
    if (e.category != IC_TRAIN) return false;
    // The IV-bound ceiling applies here exactly as it does to the punching bag and
    // to a gym reward. An item that could push past trMaxFor() would make the IV
-@@ -7036,13 +7616,88 @@ void renderBag() {
+@@ -7036,13 +7632,88 @@ void renderBag() {
    gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
    gfx->setTextColor(UI_INK);
    gfx->setTextSize(2);
@@ -1550,7 +1580,7 @@ index 8d24a9c6..02aedc8c 100644
      gfx->setTextColor(UI_INK_SOFT);
      gfx->setCursor(CX - (int)strlen(T(S_BAG_EMPTY)) * 6, CY - 8);
      gfx->print(T(S_BAG_EMPTY));
-@@ -7058,7 +7713,7 @@ void renderBag() {
+@@ -7058,7 +7729,7 @@ void renderBag() {
      gfx->setTextColor(usable ? UI_INK : 0x8410);
      gfx->setTextSize(2);
      gfx->setCursor(92, y + 17);
@@ -1559,7 +1589,7 @@ index 8d24a9c6..02aedc8c 100644
      char cnt[8];
      snprintf(cnt, sizeof(cnt), "x%u", bag.count(k));
      gfx->setCursor(374 - (int)strlen(cnt) * 12, y + 17);
-@@ -7090,7 +7745,59 @@ void renderBag() {
+@@ -7090,7 +7761,59 @@ void renderBag() {
    gfx->flush();
  }
  
@@ -1619,7 +1649,7 @@ index 8d24a9c6..02aedc8c 100644
    uint8_t n = bag.distinctCount();
    for (uint8_t i = 0; i < BAG_PER_PAGE; i++) {
      uint8_t idx = (uint8_t)(bagPage * BAG_PER_PAGE + i);
-@@ -7102,10 +7809,25 @@ void bagTap(int16_t x, int16_t y) {
+@@ -7102,10 +7825,25 @@ void bagTap(int16_t x, int16_t y) {
      if (!bagUseOnPet(k)) { sfxPlay(SFX_DENY); bagSay("%s", T(S_ITEM_NOUSE)); return; }
      bag.consume(k);
      sfxPlay(SFX_TAP);
@@ -1646,12 +1676,39 @@ index 8d24a9c6..02aedc8c 100644
  }
  
  // ---------- wild encounters ----------
-@@ -7116,11 +7838,27 @@ void bagTap(int16_t x, int16_t y) {
+@@ -7116,11 +7854,48 @@ void bagTap(int16_t x, int16_t y) {
  // HERE and remembered, because a capture has to hand back the creature that was
  // actually fought. Re-rolling any of it at capture time would mean the thing
  // you caught was not the thing on screen.
 +static bool dexHave(int16_t d) { return pet.isRegistered(d); }   // Dennis build
-+static const uint8_t LURE_LEGEND_PCT = 10;   // Dennis build 4.1.2
++// Dennis build 4.1.7: the Lure always finds something missing if anything is.
++// In the region you explore first -- the ordinary species, then (guaranteed,
++// no longer 10%) a missing legendary -- and once that region is complete, in
++// any other installed one. Only when nothing is missing anywhere does it stay
++// in the bag, instead of spending a charge on an ordinary encounter.
++static int16_t lurePickIn(uint8_t region, uint8_t tier, uint32_t pick) {
++  int16_t dex = wildPickMissing(region, tier, pick, dexHave);
++  static const uint8_t ORDER[] = { R_COMUN, R_EVO, R_RARO };
++  for (uint8_t i = 0; i < sizeof(ORDER) && !dex; i++)
++    if (ORDER[i] != tier) dex = wildPickMissing(region, ORDER[i], pick, dexHave);
++  return dex;
++}
++int16_t lurePick(uint8_t region, uint8_t tier, uint32_t pick) {
++  int16_t dex = lurePickIn(region, tier, pick);
++  if (!dex) dex = wildPickMissing(region, R_LEGENDARIO, pick, dexHave);
++  for (uint8_t k = 1; k < GAL_REGIONS && !dex; k++) {          // the others, from the next one on
++    uint8_t r = (uint8_t)((region + k) % GAL_REGIONS);
++    if (r == REGION_ALL || !regionAvailable(r)) continue;
++    dex = lurePickIn(r, tier, pick);
++  }
++  for (uint8_t k = 1; k < GAL_REGIONS && !dex; k++) {
++    uint8_t r = (uint8_t)((region + k) % GAL_REGIONS);
++    if (r == REGION_ALL || !regionAvailable(r)) continue;
++    dex = wildPickMissing(r, R_LEGENDARIO, pick, dexHave);
++  }
++  return dex;
++}
++bool lureNothingLeft = false;   // the last encounter's Lure found nothing missing anywhere
  bool startWildBattle(uint8_t region, bool hard) {
    if (pet.isEgg() || pet.ceremony != CER_NONE) return false;
    if (region >= REGION_COUNT || !regionAvailable(region)) return false;
@@ -1659,23 +1716,17 @@ index 8d24a9c6..02aedc8c 100644
 -  int16_t dex = wildPickSpecies(region, tier, (uint32_t)random(65536) * 31u + random(31));
 +  uint32_t pick = (uint32_t)random(65536) * 31u + random(31);
 +  int16_t dex = 0;
++  lureNothingLeft = false;
 +  if (bag.lureLeft()) {   // Dennis build: favour what is missing
-+    dex = wildPickMissing(region, tier, pick, dexHave);
-+    static const uint8_t ORDER[] = { R_COMUN, R_EVO, R_RARO };
-+    for (uint8_t i = 0; i < sizeof(ORDER) && !dex; i++)
-+      if (ORDER[i] != tier) dex = wildPickMissing(region, ORDER[i], pick, dexHave);
-+    // Dennis build 4.1.2: once only legendaries are missing, the lure lifts
-+    // their odds from the normal 1% to LURE_LEGEND_PCT instead of doing
-+    // nothing. While anything else is missing it still never hands one out.
-+    if (!dex && (uint8_t)random(100) < LURE_LEGEND_PCT)
-+      dex = wildPickMissing(region, R_LEGENDARIO, pick, dexHave);
-+    bag.useLure();
++    dex = lurePick(region, tier, pick);
++    if (dex) bag.useLure();
++    else lureNothingLeft = true;
 +  }
 +  if (!dex) dex = wildPickSpecies(region, tier, pick);
    // A tier can be empty when only some packs are installed -- Kanto has no
    // R_LEGENDARIO gap, but a future region might. Fall back rather than refusing
    // the encounter, since "nothing happened" reads as a broken button.
-@@ -7177,7 +7915,15 @@ bool startWildBattle(uint8_t region, bool hard) {
+@@ -7177,7 +7952,16 @@ bool startWildBattle(uint8_t region, bool hard) {
    btlLungeUntil[0] = btlLungeUntil[1] = 0;
    btlHitUntil[0] = btlHitUntil[1] = 0;
    battleOpen = true;
@@ -1688,11 +1739,12 @@ index 8d24a9c6..02aedc8c 100644
 +  } else {
 +    btlSay(T(S_WILD_MET), speciesName(dex));
 +  }
++  if (lureNothingLeft) btlSay("%s", T(S_LURE_NONE));
 +  if (btlYou.shiny) btlShinyUntil[0] = millis() + BTL_SHINY_MS;
    return true;
  }
  
-@@ -7321,6 +8067,94 @@ const char *boxSortName() {
+@@ -7321,6 +8105,94 @@ const char *boxSortName() {
    }
  }
  
@@ -1787,7 +1839,7 @@ index 8d24a9c6..02aedc8c 100644
  void renderBox() {
    gfx->fillScreen(RGB565_BLACK);
    gfx->fillCircle(CX, CY, 231, UI_BG_DAY);
-@@ -7334,16 +8168,31 @@ void renderBox() {
+@@ -7334,16 +8206,31 @@ void renderBox() {
      const PartyMon &p = party.slots[boxSwapFrom - 1];
      char sub[40];
      snprintf(sub, sizeof(sub), T(S_BOX_SWAP),
@@ -1821,7 +1873,7 @@ index 8d24a9c6..02aedc8c 100644
    }
    {
      // The hub carries the page AND the order, and tapping it cycles the order --
-@@ -7355,15 +8204,46 @@ void renderBox() {
+@@ -7355,15 +8242,46 @@ void renderBox() {
               (unsigned)(BOX_SLOTS / BOX_PER_PAGE));
      drawPartyHub(pg, boxSortName(), boxSwapFrom != 0);
    }
@@ -1872,7 +1924,7 @@ index 8d24a9c6..02aedc8c 100644
    // The sheet is checked first and is modal in the same way the party's is.
    if (boxDetail) {
      if (releaseConfirm) { monSheetConfirmTap(x, y, true); return; }
-@@ -7435,6 +8315,7 @@ void boxTap(int16_t x, int16_t y) {
+@@ -7435,6 +8353,7 @@ void boxTap(int16_t x, int16_t y) {
    boxSwapFrom = 0;
    boxDetail = 0;
    releaseConfirm = false;
@@ -1880,7 +1932,7 @@ index 8d24a9c6..02aedc8c 100644
  }
  
  // ---------- party ----------
-@@ -7455,7 +8336,7 @@ void drawPartySlot(int i, const PartyMon &m) {
+@@ -7455,7 +8374,7 @@ void drawPartySlot(int i, const PartyMon &m) {
    const uint8_t *th = thumbs.get(m.dex);
    if (th) drawThumb(th, cx - 24, cy - 44, 1, false);
    const DexEntry &d = DEX_TBL[m.dex];
@@ -1889,7 +1941,7 @@ index 8d24a9c6..02aedc8c 100644
    gfx->setTextColor(d.accent);
    gfx->setTextSize(1);
    gfx->setCursor(cx - (int)strlen(nm) * 3, cy + 8);
-@@ -7512,7 +8393,7 @@ void renderParty() {
+@@ -7512,7 +8431,7 @@ void renderParty() {
      const PartyMon &b = party.box[boxSel - 1];
      char sw[44];
      snprintf(sw, sizeof(sw), T(S_BOX_SWAP),
@@ -1898,7 +1950,7 @@ index 8d24a9c6..02aedc8c 100644
      gfx->setTextColor(UI_INK);
      gfx->setTextSize(1);
      gfx->setCursor(CX - (int)strlen(sw) * 3, PSLOT_PROMPT_Y);
-@@ -7707,6 +8588,203 @@ void galleryClampPage() {
+@@ -7707,6 +8626,203 @@ void galleryClampPage() {
    if (galleryPage >= n) galleryPage = n - 1;
  }
  
@@ -2102,7 +2154,7 @@ index 8d24a9c6..02aedc8c 100644
  void renderGallery() {
    if (galleryDetail) {  // vista detalle: se redibuja siempre (animada)
      gfx->fillScreen(RGB565_BLACK);
-@@ -7715,7 +8793,7 @@ void renderGallery() {
+@@ -7715,7 +8831,7 @@ void renderGallery() {
      bool reg = pet.isRegistered(galleryDetail);
      char head[24];
      snprintf(head, sizeof(head), "N.%03d %s%s", galleryDetail,
@@ -2111,7 +2163,16 @@ index 8d24a9c6..02aedc8c 100644
      gfx->setTextColor(reg ? d.accent : UI_INK);
      int glen = strlen(head);
      int gts = (glen <= 13) ? 3 : 2;  // auto-encoge nombres largos (no caben a t3)
-@@ -8059,7 +9137,7 @@ void drawFarewellButton() {
+@@ -7748,7 +8864,7 @@ void renderGallery() {
+   char head[32];
+   const RegionInfo &grg = REGIONS[galleryRegion % GAL_REGIONS];
+   snprintf(head, sizeof(head), "%s %u/%u", grg.name,
+-           pet.registeredCountIn(grg.lo, grg.hi), (unsigned)GAL_SPAN);
++           regionCaught(grg.lo, grg.hi), (unsigned)regionCatchable(grg.lo, grg.hi));
+   gfx->setTextColor(UI_INK);
+   gfx->setTextSize(3);
+   gfx->setCursor(CX - strlen(head) * 9, 36);
+@@ -8059,7 +9175,7 @@ void drawFarewellButton() {
    gfx->fillRoundRect(x, y, w, h, 16, UI_BAR_WARN);
    gfx->drawRoundRect(x, y, w, h, 16, UI_INK);
    char buf[52];
@@ -2120,7 +2181,7 @@ index 8d24a9c6..02aedc8c 100644
    snprintf(buf, sizeof(buf), T(S_FAREWELL_BTN), nm);
    gfx->setTextColor(UI_INK);
    gfx->setTextSize(2);
-@@ -8076,7 +9154,7 @@ void drawRunawayButton() {
+@@ -8076,7 +9192,7 @@ void drawRunawayButton() {
    gfx->fillRoundRect(x, y, w, h, 16, C565(0x3a, 0x44, 0x5a));
    gfx->drawRoundRect(x, y, w, h, 16, C565(0x70, 0x80, 0x98));
    char buf[52];
@@ -2130,7 +2191,7 @@ index 8d24a9c6..02aedc8c 100644
    gfx->setTextColor(C565(0xc8, 0xd2, 0xe0));
    gfx->setTextSize(2);
 diff --git a/audio.cpp b/audio.cpp
-index 4ec282ad..2c61d63c 100644
+index 4ec282a..2c61d63 100644
 --- a/audio.cpp
 +++ b/audio.cpp
 @@ -119,12 +119,14 @@ static const Note N_SUPER[]  = { {1200, 40}, {1600, 40}, {2000, 80} };
@@ -2150,7 +2211,7 @@ index 4ec282ad..2c61d63c 100644
  
  // A loop, not a one-shot: the task walks it and starts over.
 diff --git a/audio.h b/audio.h
-index 25103224..6990c0cf 100644
+index 2510322..6990c0c 100644
 --- a/audio.h
 +++ b/audio.h
 @@ -21,6 +21,7 @@ enum Sfx : uint8_t {
@@ -2162,7 +2223,7 @@ index 25103224..6990c0cf 100644
  };
  
 diff --git a/battle.cpp b/battle.cpp
-index 8f57ef1f..403b3111 100644
+index 8f57ef1..403b311 100644
 --- a/battle.cpp
 +++ b/battle.cpp
 @@ -20,7 +20,7 @@ void combatantFromPet(Combatant &c, const Pet &p) {
@@ -2184,7 +2245,7 @@ index 8f57ef1f..403b3111 100644
  }
  
 diff --git a/dex.h b/dex.h
-index f5181c1d..f5791276 100644
+index f5181c1..f579127 100644
 --- a/dex.h
 +++ b/dex.h
 @@ -1124,3 +1124,14 @@ static const RegionInfo REGIONS[REGION_COUNT] = {
@@ -2204,7 +2265,7 @@ index f5181c1d..f5791276 100644
 +}
 diff --git a/dex_names_de.h b/dex_names_de.h
 new file mode 100644
-index 00000000..b127f9ae
+index 0000000..b127f9a
 --- /dev/null
 +++ b/dex_names_de.h
 @@ -0,0 +1,1032 @@
@@ -3242,7 +3303,7 @@ index 00000000..b127f9ae
 +};
 diff --git a/hof.cpp b/hof.cpp
 new file mode 100644
-index 00000000..98dfaf79
+index 0000000..98dfaf7
 --- /dev/null
 +++ b/hof.cpp
 @@ -0,0 +1,134 @@
@@ -3382,7 +3443,7 @@ index 00000000..98dfaf79
 +}
 diff --git a/hof.h b/hof.h
 new file mode 100644
-index 00000000..6f9f426a
+index 0000000..6f9f426
 --- /dev/null
 +++ b/hof.h
 @@ -0,0 +1,42 @@
@@ -3429,7 +3490,7 @@ index 00000000..6f9f426a
 +bool hofAppendRaw(const HofEntry &e);    // restore path
 +bool hofClear();
 diff --git a/i18n.cpp b/i18n.cpp
-index 43de69a6..c5e85061 100644
+index 43de69a..2fe9e73 100644
 --- a/i18n.cpp
 +++ b/i18n.cpp
 @@ -50,7 +50,7 @@ static const char *const STRINGS[LANG_COUNT][STR_COUNT] = {
@@ -3437,7 +3498,7 @@ index 43de69a6..c5e85061 100644
      "MOCHILA", "MOCHILA VACIA", "EXPLORAR", "Aparece un %s salvaje!", "%s ha huido!",
      "Has escapado!", "No has podido escapar!", "Lanzas una %s", "%s capturado!", "Se ha soltado!",
 -    "Usas %s", "No ha hecho nada", "Encuentras %s!", "ACTIVAR", "CRIANDO", "LUZ %u", "REINICIAR", "Borrar todo?", "cada bicho, medalla y record se pierde", "TODOS", "CRIADOS", "EN MANO", "SHINY", "nada con este filtro", "HUECO", "NUMERO", "NIVEL", "AUDAZ", "FIRME", "VIVAZ", "RECIO", "ANIMOSO", "SERENO", "HOY", "%u/%u hoy", "cuidado hoy", "bien comido", "limpio", "contento", "descansado", "MEMORIA", "SECUENCIA %u", "MIRA", "TU TURNO", "ANIMO +%u", "A LA CAJA", "RECIBIENDO SPRITES", "%u archivos", "el juego vuelve al terminar", },
-+    "Usas %s", "No ha hecho nada", "Encuentras %s!", "ACTIVAR", "CRIANDO", "LUZ %u", "REINICIAR", "Borrar todo?", "cada bicho, medalla y record se pierde", "TODOS", "CRIADOS", "EN MANO", "SHINY", "nada con este filtro", "HUECO", "NUMERO", "NIVEL", "AUDAZ", "FIRME", "VIVAZ", "RECIO", "ANIMOSO", "SERENO", "HOY", "%u/%u hoy", "cuidado hoy", "bien comido", "limpio", "contento", "descansado", "MEMORIA", "SECUENCIA %u", "MIRA", "TU TURNO", "ANIMO +%u", "A LA CAJA", "RECIBIENDO SPRITES", "%u archivos", "el juego vuelve al terminar", "%s +%u EXP", "%s sube a Nv.%u!", "NUEVO", "%s sube a Nv.%u!", "SALON FAMA", "todavia vacio", "Despedida", "Liberado",  "+%lu P$", "Encuentras %ux %s!", "TIENDA", "Compraste %s", "Falta dinero", "Mochila llena", "%lu P$",  "MODO VITRINA", "SALIR", "Pokedex vacio",  "COMPRAR", "VENDER", "%s vendido", "Cebo: %u encuentros", "CEBO %u", "ORDENAR %u", "%u Pokemon al Salon?", "Shinies, equipo y activo se quedan", "Linea %u/%u, falta: %s", "Linea completa", "Un %s variocolor aparece!", },
++    "Usas %s", "No ha hecho nada", "Encuentras %s!", "ACTIVAR", "CRIANDO", "LUZ %u", "REINICIAR", "Borrar todo?", "cada bicho, medalla y record se pierde", "TODOS", "CRIADOS", "EN MANO", "SHINY", "nada con este filtro", "HUECO", "NUMERO", "NIVEL", "AUDAZ", "FIRME", "VIVAZ", "RECIO", "ANIMOSO", "SERENO", "HOY", "%u/%u hoy", "cuidado hoy", "bien comido", "limpio", "contento", "descansado", "MEMORIA", "SECUENCIA %u", "MIRA", "TU TURNO", "ANIMO +%u", "A LA CAJA", "RECIBIENDO SPRITES", "%u archivos", "el juego vuelve al terminar", "%s +%u EXP", "%s sube a Nv.%u!", "NUEVO", "%s sube a Nv.%u!", "SALON FAMA", "todavia vacio", "Despedida", "Liberado",  "+%lu P$", "Encuentras %ux %s!", "TIENDA", "Compraste %s", "Falta dinero", "Mochila llena", "%lu P$",  "MODO VITRINA", "SALIR", "Pokedex vacio",  "COMPRAR", "VENDER", "%s vendido", "Cebo: %u encuentros", "CEBO %u", "ORDENAR %u", "%u Pokemon al Salon?", "Shinies, equipo y activo se quedan", "Linea %u/%u, falta: %s", "Linea completa", "Un %s variocolor aparece!", "Cebo: no falta nada", },
    // ---------------- EN ----------------
    {
      "Evolving!", "Yum yum!", "It likes it!", "It's hungry!", "Needs a bath!",
@@ -3446,7 +3507,7 @@ index 43de69a6..c5e85061 100644
      "BAG", "BAG EMPTY", "EXPLORE", "A wild %s appeared!", "%s fled!",
      "You got away!", "You could not get away!", "You threw a %s", "%s was caught!", "It broke free!",
 -    "Used %s", "It had no effect", "Found %s!", "MAKE ACTIVE", "RAISING", "LIGHT %u", "RESET GAME", "Erase everything?", "every creature, badge and record is gone", "ALL", "RAISED", "CAUGHT", "SHINY", "nothing matches this filter", "SLOT", "NUMBER", "LEVEL", "BOLD", "STURDY", "BRISK", "HARDY", "EAGER", "CALM", "TODAY", "%u/%u today", "cared for today", "well fed", "clean", "happy", "rested", "MEMORY", "SEQUENCE %u", "WATCH", "YOUR TURN", "JOY +%u", "TO BOX", "RECEIVING SPRITES", "%u files", "the game resumes when done", },
-+    "Used %s", "It had no effect", "Found %s!", "MAKE ACTIVE", "RAISING", "LIGHT %u", "RESET GAME", "Erase everything?", "every creature, badge and record is gone", "ALL", "RAISED", "CAUGHT", "SHINY", "nothing matches this filter", "SLOT", "NUMBER", "LEVEL", "BOLD", "STURDY", "BRISK", "HARDY", "EAGER", "CALM", "TODAY", "%u/%u today", "cared for today", "well fed", "clean", "happy", "rested", "MEMORY", "SEQUENCE %u", "WATCH", "YOUR TURN", "JOY +%u", "TO BOX", "RECEIVING SPRITES", "%u files", "the game resumes when done", "%s +%u EXP", "%s is now Lv.%u!", "NEW", "%s grew to Lv.%u!", "HALL OF FAME", "still empty", "Farewell", "Released",  "+%lu P$", "Found %ux %s!", "SHOP", "Bought %s", "Not enough money", "Bag is full", "%lu P$",  "DISPLAY MODE", "EXIT", "Pokedex is empty",  "BUY", "SELL", "Sold %s", "Lure: %u encounters", "LURE %u", "TIDY UP %u", "%u Pokemon to the Hall of Fame?", "Shinies, team and active stay", "Line %u/%u, missing: %s", "Line complete", "A shiny %s appeared!", },
++    "Used %s", "It had no effect", "Found %s!", "MAKE ACTIVE", "RAISING", "LIGHT %u", "RESET GAME", "Erase everything?", "every creature, badge and record is gone", "ALL", "RAISED", "CAUGHT", "SHINY", "nothing matches this filter", "SLOT", "NUMBER", "LEVEL", "BOLD", "STURDY", "BRISK", "HARDY", "EAGER", "CALM", "TODAY", "%u/%u today", "cared for today", "well fed", "clean", "happy", "rested", "MEMORY", "SEQUENCE %u", "WATCH", "YOUR TURN", "JOY +%u", "TO BOX", "RECEIVING SPRITES", "%u files", "the game resumes when done", "%s +%u EXP", "%s is now Lv.%u!", "NEW", "%s grew to Lv.%u!", "HALL OF FAME", "still empty", "Farewell", "Released",  "+%lu P$", "Found %ux %s!", "SHOP", "Bought %s", "Not enough money", "Bag is full", "%lu P$",  "DISPLAY MODE", "EXIT", "Pokedex is empty",  "BUY", "SELL", "Sold %s", "Lure: %u encounters", "LURE %u", "TIDY UP %u", "%u Pokemon to the Hall of Fame?", "Shinies, team and active stay", "Line %u/%u, missing: %s", "Line complete", "A shiny %s appeared!", "Lure: nothing left to find", },
    // ---------------- FR ----------------
    {
      "Il evolue!", "Miam miam!", "Il aime ca!", "Il a faim!", "Besoin d'un bain!",
@@ -3455,7 +3516,7 @@ index 43de69a6..c5e85061 100644
      "SAC", "SAC VIDE", "EXPLORER", "Un %s sauvage apparait!", "%s a fui!",
      "Tu as pris la fuite!", "Impossible de fuir!", "Tu lances une %s", "%s est capture!", "Il s est libere!",
 -    "Tu utilises %s", "Aucun effet", "Tu trouves %s!", "RENDRE ACTIF", "EN ELEVAGE", "LUMIERE %u", "REINITIALISER", "Tout effacer?", "chaque creature, badge et record est perdu", "TOUS", "ELEVES", "EN MAIN", "SHINY", "rien avec ce filtre", "CASE", "NUMERO", "NIVEAU", "AUDACE", "SOLIDE", "VIF", "ROBUSTE", "ARDENT", "CALME", "AUJOURD HUI", "%u/%u aujourd hui", "soigne aujourd hui", "bien nourri", "propre", "content", "repose", "MEMOIRE", "SEQUENCE %u", "REGARDE", "A TOI", "JOIE +%u", "A LA BOITE", "RECEPTION DES SPRITES", "%u fichiers", "le jeu reprend a la fin", },
-+    "Tu utilises %s", "Aucun effet", "Tu trouves %s!", "RENDRE ACTIF", "EN ELEVAGE", "LUMIERE %u", "REINITIALISER", "Tout effacer?", "chaque creature, badge et record est perdu", "TOUS", "ELEVES", "EN MAIN", "SHINY", "rien avec ce filtre", "CASE", "NUMERO", "NIVEAU", "AUDACE", "SOLIDE", "VIF", "ROBUSTE", "ARDENT", "CALME", "AUJOURD HUI", "%u/%u aujourd hui", "soigne aujourd hui", "bien nourri", "propre", "content", "repose", "MEMOIRE", "SEQUENCE %u", "REGARDE", "A TOI", "JOIE +%u", "A LA BOITE", "RECEPTION DES SPRITES", "%u fichiers", "le jeu reprend a la fin", "%s +%u EXP", "%s passe Niv.%u!", "NOUV.", "%s passe Niv.%u!", "PANTHEON", "encore vide", "Adieu", "Relache",  "+%lu P$", "Tu trouves %ux %s !", "BOUTIQUE", "Achat : %s", "Pas assez d'argent", "Sac plein", "%lu P$",  "MODE VITRINE", "QUITTER", "Pokedex vide",  "ACHETER", "VENDRE", "%s vendu", "Leurre : %u rencontres", "LEURRE %u", "RANGER %u", "%u Pokemon au Pantheon ?", "Shinies, equipe et actif restent", "Lignee %u/%u, manque : %s", "Lignee complete", "Un %s chromatique apparait!", },
++    "Tu utilises %s", "Aucun effet", "Tu trouves %s!", "RENDRE ACTIF", "EN ELEVAGE", "LUMIERE %u", "REINITIALISER", "Tout effacer?", "chaque creature, badge et record est perdu", "TOUS", "ELEVES", "EN MAIN", "SHINY", "rien avec ce filtre", "CASE", "NUMERO", "NIVEAU", "AUDACE", "SOLIDE", "VIF", "ROBUSTE", "ARDENT", "CALME", "AUJOURD HUI", "%u/%u aujourd hui", "soigne aujourd hui", "bien nourri", "propre", "content", "repose", "MEMOIRE", "SEQUENCE %u", "REGARDE", "A TOI", "JOIE +%u", "A LA BOITE", "RECEPTION DES SPRITES", "%u fichiers", "le jeu reprend a la fin", "%s +%u EXP", "%s passe Niv.%u!", "NOUV.", "%s passe Niv.%u!", "PANTHEON", "encore vide", "Adieu", "Relache",  "+%lu P$", "Tu trouves %ux %s !", "BOUTIQUE", "Achat : %s", "Pas assez d'argent", "Sac plein", "%lu P$",  "MODE VITRINE", "QUITTER", "Pokedex vide",  "ACHETER", "VENDRE", "%s vendu", "Leurre : %u rencontres", "LEURRE %u", "RANGER %u", "%u Pokemon au Pantheon ?", "Shinies, equipe et actif restent", "Lignee %u/%u, manque : %s", "Lignee complete", "Un %s chromatique apparait!", "Leurre: plus rien a trouver", },
    // ---------------- DE ----------------
    {
      "Entwickelt sich!", "Mampf mampf!", "Gefaellt ihm!", "Hat Hunger!", "Braucht ein Bad!",
@@ -3464,7 +3525,7 @@ index 43de69a6..c5e85061 100644
      "BEUTEL", "BEUTEL LEER", "ERKUNDEN", "Ein wildes %s erscheint!", "%s ist geflohen!",
      "Du bist entkommen!", "Flucht gescheitert!", "Du wirfst einen %s", "%s gefangen!", "Es ist entkommen!",
 -    "%s benutzt", "Keine Wirkung", "%s gefunden!", "AKTIV MACHEN", "WIRD AUFGEZOGEN", "LICHT %u", "ZURUCKSETZEN", "Alles loschen?", "jedes Wesen, Orden und Rekord ist weg", "ALLE", "AUFGEZOGEN", "DABEI", "SHINY", "nichts mit diesem Filter", "PLATZ", "NUMMER", "LEVEL", "KUEHN", "ROBUST", "FLINK", "ZAEH", "EIFRIG", "RUHIG", "HEUTE", "%u/%u heute", "heute gepflegt", "gut genaehrt", "sauber", "gluecklich", "ausgeruht", "MERKEN", "FOLGE %u", "SCHAU", "DU BIST DRAN", "FREUDE +%u", "IN DIE BOX", "EMPFANGE SPRITES", "%u Dateien", "danach geht es weiter", },
-+    "%s benutzt", "Keine Wirkung", "%s gefunden!", "AKTIV MACHEN", "WIRD AUFGEZOGEN", "LICHT %u", "ZURUCKSETZEN", "Alles loschen?", "jedes Wesen, Orden und Rekord ist weg", "ALLE", "EINGETRAGEN", "DABEI", "SHINY", "nichts mit diesem Filter", "PLATZ", "NUMMER", "LEVEL", "KUEHN", "ROBUST", "FLINK", "ZAEH", "EIFRIG", "RUHIG", "HEUTE", "%u/%u heute", "heute gepflegt", "gut genaehrt", "sauber", "gluecklich", "ausgeruht", "MERKEN", "FOLGE %u", "SCHAU", "DU BIST DRAN", "FREUDE +%u", "IN DIE BOX", "EMPFANGE SPRITES", "%u Dateien", "danach geht es weiter", "%s +%u EP", "%s ist jetzt Lv.%u!", "NEU", "%s ist jetzt Lv.%u!", "RUHMESHALLE", "noch leer", "Abschied", "Freigelassen",  "+%lu P$", "%ux %s gefunden!", "LADEN", "%s gekauft", "Zu wenig Geld", "Beutel voll", "%lu P$",  "VITRINEN-MODUS", "BEENDEN", "Pokedex ist leer",  "KAUFEN", "VERKAUFEN", "%s verkauft", "Lockstoff: %u Begegnungen", "LOCKSTOFF %u", "AUFRAEUMEN %u", "%u Pokemon in die Ruhmeshalle?", "Shinys, Team und Aktives bleiben", "Reihe %u/%u, fehlt: %s", "Reihe komplett", "Ein schillerndes %s erscheint!", },
++    "%s benutzt", "Keine Wirkung", "%s gefunden!", "AKTIV MACHEN", "WIRD AUFGEZOGEN", "LICHT %u", "ZURUCKSETZEN", "Alles loschen?", "jedes Wesen, Orden und Rekord ist weg", "ALLE", "EINGETRAGEN", "DABEI", "SHINY", "nichts mit diesem Filter", "PLATZ", "NUMMER", "LEVEL", "KUEHN", "ROBUST", "FLINK", "ZAEH", "EIFRIG", "RUHIG", "HEUTE", "%u/%u heute", "heute gepflegt", "gut genaehrt", "sauber", "gluecklich", "ausgeruht", "MERKEN", "FOLGE %u", "SCHAU", "DU BIST DRAN", "FREUDE +%u", "IN DIE BOX", "EMPFANGE SPRITES", "%u Dateien", "danach geht es weiter", "%s +%u EP", "%s ist jetzt Lv.%u!", "NEU", "%s ist jetzt Lv.%u!", "RUHMESHALLE", "noch leer", "Abschied", "Freigelassen",  "+%lu P$", "%ux %s gefunden!", "LADEN", "%s gekauft", "Zu wenig Geld", "Beutel voll", "%lu P$",  "VITRINEN-MODUS", "BEENDEN", "Pokedex ist leer",  "KAUFEN", "VERKAUFEN", "%s verkauft", "Lockstoff: %u Begegnungen", "LOCKSTOFF %u", "AUFRAEUMEN %u", "%u Pokemon in die Ruhmeshalle?", "Shinys, Team und Aktives bleiben", "Reihe %u/%u, fehlt: %s", "Reihe komplett", "Ein schillerndes %s erscheint!", "Lockstoff: nichts mehr zu finden", },
    // ---------------- IT ----------------
    {
      "Si evolve!", "Gnam gnam!", "Gli piace!", "Ha fame!", "Vuole un bagno!",
@@ -3473,7 +3534,7 @@ index 43de69a6..c5e85061 100644
      "ZAINO", "ZAINO VUOTO", "ESPLORA", "Appare un %s selvatico!", "%s e fuggito!",
      "Sei riuscito a fuggire!", "Non sei riuscito a fuggire!", "Lanci una %s", "%s catturato!", "Si e liberato!",
 -    "Usi %s", "Nessun effetto", "Trovi %s!", "RENDI ATTIVO", "IN ALLEVAMENTO", "LUCE %u", "AZZERA", "Cancellare tutto?", "ogni creatura, medaglia e record va perso", "TUTTI", "ALLEVATI", "CON TE", "SHINY", "nulla con questo filtro", "POSTO", "NUMERO", "LIVELLO", "AUDACE", "SOLIDO", "LESTO", "TENACE", "ARDITO", "CALMO", "OGGI", "%u/%u oggi", "curato oggi", "ben nutrito", "pulito", "contento", "riposato", "MEMORIA", "SEQUENZA %u", "GUARDA", "TOCCA A TE", "GIOIA +%u", "NEL BOX", "RICEZIONE SPRITE", "%u file", "il gioco riprende alla fine", },
-+    "Usi %s", "Nessun effetto", "Trovi %s!", "RENDI ATTIVO", "IN ALLEVAMENTO", "LUCE %u", "AZZERA", "Cancellare tutto?", "ogni creatura, medaglia e record va perso", "TUTTI", "ALLEVATI", "CON TE", "SHINY", "nulla con questo filtro", "POSTO", "NUMERO", "LIVELLO", "AUDACE", "SOLIDO", "LESTO", "TENACE", "ARDITO", "CALMO", "OGGI", "%u/%u oggi", "curato oggi", "ben nutrito", "pulito", "contento", "riposato", "MEMORIA", "SEQUENZA %u", "GUARDA", "TOCCA A TE", "GIOIA +%u", "NEL BOX", "RICEZIONE SPRITE", "%u file", "il gioco riprende alla fine", "%s +%u ESP", "%s sale al Liv.%u!", "NUOVO", "%s sale al Liv.%u!", "HALL OF FAME", "ancora vuota", "Addio", "Liberato",  "+%lu P$", "Trovi %ux %s!", "NEGOZIO", "Comprato %s", "Soldi insufficienti", "Borsa piena", "%lu P$",  "MODO VETRINA", "ESCI", "Pokedex vuoto",  "COMPRA", "VENDI", "%s venduto", "Esca: %u incontri", "ESCA %u", "RIORDINA %u", "%u Pokemon nella Hall?", "Shiny, squadra e attivo restano", "Linea %u/%u, manca: %s", "Linea completa", "Un %s cromatico appare!", },
++    "Usi %s", "Nessun effetto", "Trovi %s!", "RENDI ATTIVO", "IN ALLEVAMENTO", "LUCE %u", "AZZERA", "Cancellare tutto?", "ogni creatura, medaglia e record va perso", "TUTTI", "ALLEVATI", "CON TE", "SHINY", "nulla con questo filtro", "POSTO", "NUMERO", "LIVELLO", "AUDACE", "SOLIDO", "LESTO", "TENACE", "ARDITO", "CALMO", "OGGI", "%u/%u oggi", "curato oggi", "ben nutrito", "pulito", "contento", "riposato", "MEMORIA", "SEQUENZA %u", "GUARDA", "TOCCA A TE", "GIOIA +%u", "NEL BOX", "RICEZIONE SPRITE", "%u file", "il gioco riprende alla fine", "%s +%u ESP", "%s sale al Liv.%u!", "NUOVO", "%s sale al Liv.%u!", "HALL OF FAME", "ancora vuota", "Addio", "Liberato",  "+%lu P$", "Trovi %ux %s!", "NEGOZIO", "Comprato %s", "Soldi insufficienti", "Borsa piena", "%lu P$",  "MODO VETRINA", "ESCI", "Pokedex vuoto",  "COMPRA", "VENDI", "%s venduto", "Esca: %u incontri", "ESCA %u", "RIORDINA %u", "%u Pokemon nella Hall?", "Shiny, squadra e attivo restano", "Linea %u/%u, manca: %s", "Linea completa", "Un %s cromatico appare!", "Esca: non manca nulla", },
    // ---------------- PT ----------------
    {
      "Evoluindo!", "Nham nham!", "Ele gosta!", "Esta com fome!", "Precisa de banho!",
@@ -3482,15 +3543,15 @@ index 43de69a6..c5e85061 100644
      "MOCHILA", "MOCHILA VAZIA", "EXPLORAR", "Um %s selvagem aparece!", "%s fugiu!",
      "Conseguiste fugir!", "Nao conseguiste fugir!", "Lancas uma %s", "%s capturado!", "Escapou!",
 -    "Usas %s", "Sem efeito", "Encontras %s!", "TORNAR ATIVO", "A CRIAR", "LUZ %u", "REINICIAR", "Apagar tudo?", "cada criatura, medalha e record perde-se", "TODOS", "CRIADOS", "NA MAO", "SHINY", "nada com este filtro", "LUGAR", "NUMERO", "NIVEL", "AUDAZ", "FIRME", "AGIL", "RIJO", "ANIMADO", "CALMO", "HOJE", "%u/%u hoje", "cuidado hoje", "bem alimentado", "limpo", "contente", "descansado", "MEMORIA", "SEQUENCIA %u", "OLHA", "E A TUA VEZ", "ANIMO +%u", "PARA A CAIXA", "A RECEBER SPRITES", "%u ficheiros", "o jogo volta no fim", },
-+    "Usas %s", "Sem efeito", "Encontras %s!", "TORNAR ATIVO", "A CRIAR", "LUZ %u", "REINICIAR", "Apagar tudo?", "cada criatura, medalha e record perde-se", "TODOS", "CRIADOS", "NA MAO", "SHINY", "nada com este filtro", "LUGAR", "NUMERO", "NIVEL", "AUDAZ", "FIRME", "AGIL", "RIJO", "ANIMADO", "CALMO", "HOJE", "%u/%u hoje", "cuidado hoje", "bem alimentado", "limpo", "contente", "descansado", "MEMORIA", "SEQUENCIA %u", "OLHA", "E A TUA VEZ", "ANIMO +%u", "PARA A CAIXA", "A RECEBER SPRITES", "%u ficheiros", "o jogo volta no fim", "%s +%u EXP", "%s subiu p/ Nv.%u!", "NOVO", "%s subiu p/ Nv.%u!", "HALL DA FAMA", "ainda vazio", "Despedida", "Libertado",  "+%lu P$", "Encontrou %ux %s!", "LOJA", "Comprou %s", "Dinheiro insuficiente", "Mochila cheia", "%lu P$",  "MODO VITRINE", "SAIR", "Pokedex vazio",  "COMPRAR", "VENDER", "%s vendido", "Atrativo: %u encontros", "ATRATIVO %u", "ARRUMAR %u", "%u Pokemon para o Hall?", "Shinies, equipe e ativo ficam", "Linha %u/%u, falta: %s", "Linha completa", "Um %s brilhante apareceu!", },
++    "Usas %s", "Sem efeito", "Encontras %s!", "TORNAR ATIVO", "A CRIAR", "LUZ %u", "REINICIAR", "Apagar tudo?", "cada criatura, medalha e record perde-se", "TODOS", "CRIADOS", "NA MAO", "SHINY", "nada com este filtro", "LUGAR", "NUMERO", "NIVEL", "AUDAZ", "FIRME", "AGIL", "RIJO", "ANIMADO", "CALMO", "HOJE", "%u/%u hoje", "cuidado hoje", "bem alimentado", "limpo", "contente", "descansado", "MEMORIA", "SEQUENCIA %u", "OLHA", "E A TUA VEZ", "ANIMO +%u", "PARA A CAIXA", "A RECEBER SPRITES", "%u ficheiros", "o jogo volta no fim", "%s +%u EXP", "%s subiu p/ Nv.%u!", "NOVO", "%s subiu p/ Nv.%u!", "HALL DA FAMA", "ainda vazio", "Despedida", "Libertado",  "+%lu P$", "Encontrou %ux %s!", "LOJA", "Comprou %s", "Dinheiro insuficiente", "Mochila cheia", "%lu P$",  "MODO VITRINE", "SAIR", "Pokedex vazio",  "COMPRAR", "VENDER", "%s vendido", "Atrativo: %u encontros", "ATRATIVO %u", "ARRUMAR %u", "%u Pokemon para o Hall?", "Shinies, equipe e ativo ficam", "Linha %u/%u, falta: %s", "Linha completa", "Um %s brilhante apareceu!", "Isca: nada mais a encontrar", },
  };
  
  // Nombres de medalla en sus tres longitudes [idioma][medalla].
 diff --git a/i18n.h b/i18n.h
-index 6b7c748c..d006fd3a 100644
+index 6b7c748..b32f30b 100644
 --- a/i18n.h
 +++ b/i18n.h
-@@ -174,6 +174,18 @@ enum StrId : uint8_t {
+@@ -174,6 +174,19 @@ enum StrId : uint8_t {
    S_BOX_PUT,        // party detail sheet: move this creature into the box
    // shown while a sprite pack streams in over USB
    S_XFER, S_XFER_FMT, S_XFER_HINT,
@@ -3506,11 +3567,12 @@ index 6b7c748c..d006fd3a 100644
 +  S_SHOP_BUY, S_SHOP_SELL, S_SHOP_SOLD, S_LURE_ON, S_LURE_LEFT,
 +  S_CLEANUP, S_CLEANUP_Q, S_CLEANUP_SUB, S_LINE_FMT, S_LINE_DONE,   // Dennis build
 +  S_WILD_SHINY,     // "A shiny %s appeared!" (Dennis build 4.1.1)
++  S_LURE_NONE,      // Dennis build 4.1.7: the Lure found nothing missing anywhere
    STR_COUNT
  };
  
 diff --git a/inventory.cpp b/inventory.cpp
-index 2156aa93..9235456b 100644
+index 2156aa9..9235456 100644
 --- a/inventory.cpp
 +++ b/inventory.cpp
 @@ -31,18 +31,75 @@ void Inventory::begin() {
@@ -3591,7 +3653,7 @@ index 2156aa93..9235456b 100644
  
  void Inventory::grantStarterKit() {
 diff --git a/inventory.h b/inventory.h
-index 409cd3fd..ff3525ec 100644
+index 409cd3f..ff3525e 100644
 --- a/inventory.h
 +++ b/inventory.h
 @@ -15,6 +15,8 @@
@@ -3636,7 +3698,7 @@ index 409cd3fd..ff3525ec 100644
  };
  
 diff --git a/items.h b/items.h
-index dff82ce1..1d5643a7 100644
+index dff82ce..1d5643a 100644
 --- a/items.h
 +++ b/items.h
 @@ -26,6 +26,9 @@ enum : uint8_t {
@@ -3763,7 +3825,7 @@ index dff82ce1..1d5643a7 100644
 +
 diff --git a/names.cpp b/names.cpp
 new file mode 100644
-index 00000000..ec4e0f64
+index 0000000..ec4e0f6
 --- /dev/null
 +++ b/names.cpp
 @@ -0,0 +1,60 @@
@@ -3828,7 +3890,7 @@ index 00000000..ec4e0f64
 +  return en;
 +}
 diff --git a/nvsinfo.cpp b/nvsinfo.cpp
-index e5a9b74b..fc1d9f23 100644
+index e5a9b74..fc1d9f2 100644
 --- a/nvsinfo.cpp
 +++ b/nvsinfo.cpp
 @@ -33,10 +33,6 @@
@@ -3865,7 +3927,7 @@ index e5a9b74b..fc1d9f23 100644
                    "boot; EXPORT now\n", when);
  }
 diff --git a/nvsinfo.h b/nvsinfo.h
-index babb0b05..2951ad84 100644
+index babb0b0..2951ad8 100644
 --- a/nvsinfo.h
 +++ b/nvsinfo.h
 @@ -11,6 +11,18 @@ bool nvsEntryStats(uint32_t *used, uint32_t *available, uint32_t *total);
@@ -3888,7 +3950,7 @@ index babb0b05..2951ad84 100644
  // label ("boot", "health") so a soak test can see the trend.
  void nvsReport(const char *when);
 diff --git a/pet.cpp b/pet.cpp
-index dcc1cdcc..44885d9b 100644
+index dcc1cdc..44885d9 100644
 --- a/pet.cpp
 +++ b/pet.cpp
 @@ -934,6 +934,16 @@ void Pet::registerSpecies(int16_t dex) {
@@ -3961,7 +4023,7 @@ index dcc1cdcc..44885d9b 100644
      if (saveFailures < 255) saveFailures++;
      Serial.println("save: player checkpoint failed");
 diff --git a/pet.h b/pet.h
-index 48690d56..c890359e 100644
+index 48690d5..c890359 100644
 --- a/pet.h
 +++ b/pet.h
 @@ -252,6 +252,10 @@ public:
@@ -4008,7 +4070,7 @@ index 48690d56..c890359e 100644
    static uint8_t clamp100(int v) { return v < 0 ? 0 : (v > 100 ? 100 : v); }
  };
 diff --git a/save.cpp b/save.cpp
-index 08f58924..8ae1ca34 100644
+index 08f5892..8ae1ca3 100644
 --- a/save.cpp
 +++ b/save.cpp
 @@ -26,6 +26,8 @@ const SaveField SAVE_FIELDS[] = {
@@ -4021,7 +4083,7 @@ index 08f58924..8ae1ca34 100644
    { "lang", SK_U8 },    { "snd", SK_BOOL },   { "vol", SK_U8 },
    // Screen brightness, 1..BRIGHT_LEVELS. Here beside the volume it mirrors, and
 diff --git a/sdmon.cpp b/sdmon.cpp
-index 4368aab0..9a5f165c 100644
+index 4368aab..9a5f165 100644
 --- a/sdmon.cpp
 +++ b/sdmon.cpp
 @@ -258,6 +258,7 @@ void SdMon::unload() {
@@ -4111,7 +4173,7 @@ index 4368aab0..9a5f165c 100644
      int sp = line.lastIndexOf(' ');
      String path = line.substring(4, sp);
 diff --git a/tools/emu/build.sh b/tools/emu/build.sh
-index 98678a9a..24d180c6 100644
+index 98678a9..24d180c 100644
 --- a/tools/emu/build.sh
 +++ b/tools/emu/build.sh
 @@ -28,7 +28,7 @@ g++ -std=c++17 -O1 -w \
@@ -4125,7 +4187,7 @@ index 98678a9a..24d180c6 100644
  
 diff --git a/tools/emu/tests/catch_test.cpp b/tools/emu/tests/catch_test.cpp
 new file mode 100644
-index 00000000..d00f9ae4
+index 0000000..d00f9ae
 --- /dev/null
 +++ b/tools/emu/tests/catch_test.cpp
 @@ -0,0 +1,72 @@
@@ -4203,7 +4265,7 @@ index 00000000..d00f9ae4
 +}
 diff --git a/tools/emu/tests/dennis405_test.cpp b/tools/emu/tests/dennis405_test.cpp
 new file mode 100644
-index 00000000..ce5456f5
+index 0000000..ce5456f
 --- /dev/null
 +++ b/tools/emu/tests/dennis405_test.cpp
 @@ -0,0 +1,116 @@
@@ -4325,7 +4387,7 @@ index 00000000..ce5456f5
 +}
 diff --git a/tools/emu/tests/dexcatch_test.cpp b/tools/emu/tests/dexcatch_test.cpp
 new file mode 100644
-index 00000000..1fc5f218
+index 0000000..1fc5f21
 --- /dev/null
 +++ b/tools/emu/tests/dexcatch_test.cpp
 @@ -0,0 +1,81 @@
@@ -4412,7 +4474,7 @@ index 00000000..1fc5f218
 +}
 diff --git a/tools/emu/tests/dimflash_test.cpp b/tools/emu/tests/dimflash_test.cpp
 new file mode 100644
-index 00000000..62b72419
+index 0000000..62b7241
 --- /dev/null
 +++ b/tools/emu/tests/dimflash_test.cpp
 @@ -0,0 +1,36 @@
@@ -4454,7 +4516,7 @@ index 00000000..62b72419
 +}
 diff --git a/tools/emu/tests/exp_test.cpp b/tools/emu/tests/exp_test.cpp
 new file mode 100644
-index 00000000..275863e1
+index 0000000..275863e
 --- /dev/null
 +++ b/tools/emu/tests/exp_test.cpp
 @@ -0,0 +1,122 @@
@@ -4581,7 +4643,7 @@ index 00000000..275863e1
 +  return bad ? 1 : 0;
 +}
 diff --git a/tools/emu/tests/explore_test.cpp b/tools/emu/tests/explore_test.cpp
-index 9b177b4d..04d1eab6 100644
+index 9b177b4..04d1eab 100644
 --- a/tools/emu/tests/explore_test.cpp
 +++ b/tools/emu/tests/explore_test.cpp
 @@ -119,8 +119,10 @@ int main() {
@@ -4599,7 +4661,7 @@ index 9b177b4d..04d1eab6 100644
      // at all behaves as it always did rather than losing every gym.
 diff --git a/tools/emu/tests/hof_test.cpp b/tools/emu/tests/hof_test.cpp
 new file mode 100644
-index 00000000..f0b54dcf
+index 0000000..f0b54dc
 --- /dev/null
 +++ b/tools/emu/tests/hof_test.cpp
 @@ -0,0 +1,126 @@
@@ -4731,7 +4793,7 @@ index 00000000..f0b54dcf
 +}
 diff --git a/tools/emu/tests/names_test.cpp b/tools/emu/tests/names_test.cpp
 new file mode 100644
-index 00000000..5d14bade
+index 0000000..5d14bad
 --- /dev/null
 +++ b/tools/emu/tests/names_test.cpp
 @@ -0,0 +1,65 @@
@@ -4802,7 +4864,7 @@ index 00000000..5d14bade
 +}
 diff --git a/tools/emu/tests/nvsbudget_test.cpp b/tools/emu/tests/nvsbudget_test.cpp
 new file mode 100644
-index 00000000..28d330d5
+index 0000000..28d330d
 --- /dev/null
 +++ b/tools/emu/tests/nvsbudget_test.cpp
 @@ -0,0 +1,74 @@
@@ -4882,7 +4944,7 @@ index 00000000..28d330d5
 +}
 diff --git a/tools/emu/tests/regionhide_test.cpp b/tools/emu/tests/regionhide_test.cpp
 new file mode 100644
-index 00000000..6f33f16f
+index 0000000..6f33f16
 --- /dev/null
 +++ b/tools/emu/tests/regionhide_test.cpp
 @@ -0,0 +1,78 @@
@@ -4965,7 +5027,7 @@ index 00000000..6f33f16f
 +  return bad ? 1 : 0;
 +}
 diff --git a/tools/emu/tests/run.sh b/tools/emu/tests/run.sh
-index 7550238d..7a0a9481 100755
+index 7550238..7a0a948 100755
 --- a/tools/emu/tests/run.sh
 +++ b/tools/emu/tests/run.sh
 @@ -29,7 +29,7 @@ command -v sdl2-config >/dev/null || { echo "SDL2 not found (brew install sdl2)"
@@ -5002,7 +5064,7 @@ index 7550238d..7a0a9481 100755
    selected+=("$src")
 diff --git a/tools/emu/tests/shiny_test.cpp b/tools/emu/tests/shiny_test.cpp
 new file mode 100644
-index 00000000..310a03d3
+index 0000000..310a03d
 --- /dev/null
 +++ b/tools/emu/tests/shiny_test.cpp
 @@ -0,0 +1,86 @@
@@ -5094,7 +5156,7 @@ index 00000000..310a03d3
 +}
 diff --git a/tools/emu/tests/shop_test.cpp b/tools/emu/tests/shop_test.cpp
 new file mode 100644
-index 00000000..9720fa86
+index 0000000..9720fa8
 --- /dev/null
 +++ b/tools/emu/tests/shop_test.cpp
 @@ -0,0 +1,140 @@
@@ -5240,10 +5302,10 @@ index 00000000..9720fa86
 +}
 diff --git a/tools/emu/tests/tidy_test.cpp b/tools/emu/tests/tidy_test.cpp
 new file mode 100644
-index 00000000..3e3e9c97
+index 0000000..bf1a531
 --- /dev/null
 +++ b/tools/emu/tests/tidy_test.cpp
-@@ -0,0 +1,178 @@
+@@ -0,0 +1,204 @@
 +// Dennis build 4.0.13: selling in the shop (one write per visit), the box's
 +// line ticks + TIDY UP, and the Lure.
 +#include "Arduino.h"
@@ -5272,6 +5334,8 @@ index 00000000..3e3e9c97
 +uint8_t cleanupMarks(uint8_t *mark);
 +uint8_t cleanupRun();
 +int16_t lineBase(int16_t dex);
++uint16_t regionCatchable(uint16_t lo, uint16_t hi); uint16_t regionCaught(uint16_t lo, uint16_t hi);
++extern bool lureNothingLeft; extern uint8_t btlMsgCount; extern char btlMsg[6][40];
 +extern Pet pet; extern Party party; extern Inventory bag; extern Arduino_Canvas *gfx;
 +extern bool bagOpen, shopMode, shopSell, boxOpen, partyOpen, exploreOpen; extern uint8_t boxPage, bagPage;
 +extern int16_t wildDex; extern bool battleOpen;
@@ -5388,7 +5452,7 @@ index 00000000..3e3e9c97
 +
 +  // ---- Dennis build 4.1.2: only a legendary is missing
 +  // The Lure used to find nothing here and spend a charge on an ordinary
-+  // encounter. Now it lifts the missing legendary to ~10% (from 1% x 1/5).
++  // encounter. 4.1.2 lifted it to ~10%; 4.1.7 makes it certain.
 +  {
 +    for (int16_t d = 1; d <= 150; d++) pet.dexReg[(d - 1) >> 3] |= 1 << ((d - 1) & 7);
 +    pet.dexReg[(151 - 1) >> 3] &= ~(1 << ((151 - 1) & 7));
@@ -5401,7 +5465,7 @@ index 00000000..3e3e9c97
 +      else if (wildDex >= 144 && wildDex <= 150 && wildDex != 147 && wildDex != 148 && wildDex != 149) otherLegend++;
 +    }
 +    printf("      only MEW missing, Lure on: %d of %d encounters were MEW\n", mew, N);
-+    CHECK(mew > N * 7 / 100 && mew < N * 14 / 100, "the Lure finds the missing legendary about 10% of the time");
++    CHECK(mew == N, "4.1.7: the Lure always brings the missing legendary (was ~10%)");
 +    int plain = 0;
 +    while (bag.lureLeft()) bag.useLure();
 +    for (int i = 0; i < N; i++) { startWildBattle(0, false); battleOpen = false; if (wildDex == 151) plain++; }
@@ -5419,12 +5483,36 @@ index 00000000..3e3e9c97
 +    CHECK(legend < 12, "with an ordinary species missing, the Lure does not boost legendaries");
 +  }
 +
++  // ---- Dennis build 4.1.7: a complete region sends the Lure elsewhere, a
++  // complete dex keeps the charge, and the totals leave out what has no art
++  {
++    for (int16_t d = 1; d <= 151; d++) pet.dexReg[(d - 1) >> 3] |= 1 << ((d - 1) & 7);
++    while (bag.lureLeft()) bag.useLure();
++    bag.addLure(5);
++    int away = 0;
++    for (int i = 0; i < 5; i++) { startWildBattle(0, false); battleOpen = false; if (wildDex > 151 && !pet.isRegistered(wildDex)) away++; }
++    printf("      Kanto complete, Lure on in Kanto: %d of 5 were missing species from other regions\n", away);
++    CHECK(away == 5 && !bag.lureLeft(), "a complete region sends the Lure to the others");
++    for (int16_t d = 1; d <= DEX_COUNT; d++) pet.dexReg[(d - 1) >> 3] |= 1 << ((d - 1) & 7);
++    bag.addLure(3);
++    startWildBattle(4, false); battleOpen = false;
++    printf("      everything caught: \"%s\" / \"%s\"\n", btlMsg[0], btlMsg[1]);
++    CHECK(lureNothingLeft && bag.lureLeft() == 3, "with nothing missing anywhere the charge stays in the bag");
++    CHECK(btlMsgCount >= 2 && strstr(btlMsg[1], "nichts mehr"), "and the battle says so");
++    printf("      catchable: all %u, Kanto %u, Einall %u, Paldea %u\n", regionCatchable(1, DEX_COUNT),
++           regionCatchable(1, 151), regionCatchable(494, 649), regionCatchable(906, 1025));
++    CHECK(regionCatchable(1, DEX_COUNT) == 977 && regionCatchable(1, 151) == 151 &&
++          regionCatchable(494, 649) == 143 && regionCatchable(906, 1025) == 100,
++          "the totals count only species that can appear (977, not 1025)");
++    CHECK(regionCaught(1, DEX_COUNT) == 977, "and a full dex reads 977/977");
++  }
++
 +  printf(bad ? "FAILURES\n" : "all good\n");
 +  return bad ? 1 : 0;
 +}
 diff --git a/tools/emu/tests/vitrine_test.cpp b/tools/emu/tests/vitrine_test.cpp
 new file mode 100644
-index 00000000..61bdb04d
+index 0000000..61bdb04
 --- /dev/null
 +++ b/tools/emu/tests/vitrine_test.cpp
 @@ -0,0 +1,116 @@
@@ -5546,7 +5634,7 @@ index 00000000..61bdb04d
 +}
 diff --git a/tools/emu/tests/vitsize_test.cpp b/tools/emu/tests/vitsize_test.cpp
 new file mode 100644
-index 00000000..9bc93334
+index 0000000..9bc9333
 --- /dev/null
 +++ b/tools/emu/tests/vitsize_test.cpp
 @@ -0,0 +1,54 @@
@@ -5605,7 +5693,7 @@ index 00000000..9bc93334
 +  return bad ? 1 : 0;
 +}
 diff --git a/tools/emu/tests/wild_test.cpp b/tools/emu/tests/wild_test.cpp
-index 08a8dffd..a415754a 100644
+index 08a8dff..a415754 100644
 --- a/tools/emu/tests/wild_test.cpp
 +++ b/tools/emu/tests/wild_test.cpp
 @@ -55,9 +55,9 @@ int main(){
@@ -5647,7 +5735,7 @@ index 08a8dffd..a415754a 100644
       "hard opens the whole ladder");
 diff --git a/tools/gen_names_de.py b/tools/gen_names_de.py
 new file mode 100644
-index 00000000..accb40fb
+index 0000000..accb40f
 --- /dev/null
 +++ b/tools/gen_names_de.py
 @@ -0,0 +1,51 @@
@@ -5703,7 +5791,7 @@ index 00000000..accb40fb
 +if __name__ == '__main__':
 +    main()
 diff --git a/trainers.h b/trainers.h
-index ba0ea393..56137581 100644
+index ba0ea39..5613758 100644
 --- a/trainers.h
 +++ b/trainers.h
 @@ -53,6 +53,10 @@ struct TrainerMon {
@@ -5718,7 +5806,7 @@ index ba0ea393..56137581 100644
    const char *name;
    const char *place;   // gym town, or the Elite 4 room
 diff --git a/types.h b/types.h
-index eebc67b4..b5e497b0 100644
+index eebc67b..b5e497b 100644
 --- a/types.h
 +++ b/types.h
 @@ -30,9 +30,11 @@ static inline bool hasStab(int16_t dex, uint8_t moveType) {
@@ -5736,7 +5824,7 @@ index eebc67b4..b5e497b0 100644
      "NORMAL", "FIRE", "WATER", "ELECTRIC", "GRASS", "ICE", "FIGHTING",
      "POISON", "GROUND", "FLYING", "PSYCHIC", "BUG", "ROCK", "GHOST",
 diff --git a/wild.cpp b/wild.cpp
-index 8cbc56c4..0321e555 100644
+index 8cbc56c..0321e55 100644
 --- a/wild.cpp
 +++ b/wild.cpp
 @@ -53,8 +53,10 @@ uint8_t wildLevelMin(uint8_t playerLevel, bool hard) {
@@ -5799,7 +5887,7 @@ index 8cbc56c4..0321e555 100644
 +  return 0;
 +}
 diff --git a/wild.h b/wild.h
-index ea9311d9..5753ab64 100644
+index ea9311d..5753ab6 100644
 --- a/wild.h
 +++ b/wild.h
 @@ -39,6 +39,18 @@ uint8_t wildCaptureChance(uint8_t rarity, uint16_t hp, uint16_t maxHp,
